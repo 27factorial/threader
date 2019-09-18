@@ -121,13 +121,12 @@ fn create_thread(
 }
 
 /// The executor. This is the part of the thread pool that actually
-/// executes futures. It holds many `ExecutorThreads`, which are threads
-/// that call `Future::poll()` on the spawned futures. The injector is a
-/// global queue that is accessible to all tasks and threads, and is used
-/// for spawning new tasks.
+/// executes futures. It holds many threads which will call `Future::poll()`
+/// on the spawned futures. The injector is a global queue that is accessible
+/// to all tasks and threads, and is used for spawning new tasks.
 #[derive(Debug)]
 pub struct Executor {
-    threads: Vec<ExecutorThread>,
+    threads: Vec<JoinHandle<()>>,
     handle: Arc<ExecutorHandle>,
     injector: &'static Injector<Arc<Task>>,
 }
@@ -160,7 +159,7 @@ impl Executor {
         let threads = {
             let mut vec = Vec::with_capacity(count);
             for worker in workers {
-                let thread = ExecutorThread::new(worker, Arc::clone(&handle), &INJECTOR);
+                let thread = create_thread(Arc::clone(&handle), worker, &INJECTOR);
                 vec.push(thread);
             }
             vec
@@ -194,8 +193,7 @@ impl Drop for Executor {
         }
 
         while let Some(thread) = self.threads.pop() {
-            let handle = thread.shutdown();
-            handle.join().ok();
+            thread.join().ok();
         }
     }
 }
@@ -207,32 +205,6 @@ impl Drop for Executor {
 pub(crate) struct ExecutorHandle {
     stealers: Vec<Stealer<Arc<Task>>>,
     shutdown: AtomicBool,
-}
-
-/// A thread that calls `Future::poll()` on the future given to it by
-/// the executor.
-#[derive(Debug)]
-struct ExecutorThread {
-    join_handle: JoinHandle<()>,
-}
-
-impl ExecutorThread {
-    /// Creates a new instance of `ExecutorThread`.
-    fn new(
-        worker: Worker<Arc<Task>>,
-        handle: Arc<ExecutorHandle>,
-        injector: &'static Injector<Arc<Task>>,
-    ) -> ExecutorThread {
-        let join_handle = create_thread(handle, worker, injector);
-
-        ExecutorThread { join_handle }
-    }
-
-    /// Notifies the thread that it should be shut down (by dropping the notifier)
-    /// and returns the `JoinHandle` of said thread.
-    fn shutdown(self) -> JoinHandle<()> {
-        self.join_handle
-    }
 }
 
 #[cfg(test)]
