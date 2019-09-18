@@ -198,9 +198,8 @@ impl Drop for Executor {
     }
 }
 
-/// A handle to all of the `ExecutorThread`s that `Executor` holds.
-/// used for notifying threads when a task is pushed back into
-/// the injector queue.
+/// A handle to the current executor. Used for threads to access other
+/// threads' stealers, and for signalling shutdown.
 #[derive(Debug)]
 pub(crate) struct ExecutorHandle {
     stealers: Vec<Stealer<Arc<Task>>>,
