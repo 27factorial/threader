@@ -68,7 +68,7 @@ fn create_thread(
             worker.pop()
         });
 
-        if handle.shutdown.load(Ordering::Acquire) {
+        if handle.shutdown.load(Ordering::Relaxed) {
             return;
         }
 
