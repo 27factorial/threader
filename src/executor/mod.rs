@@ -69,7 +69,7 @@ fn create_thread(
         });
 
         // We're not relying on this value to synchronize,
-        // so an atomic load is okay here.
+        // so a relaxed load is okay here.
         if handle.shutdown.load(Ordering::Relaxed) {
             return;
         }
