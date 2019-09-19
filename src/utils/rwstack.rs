@@ -42,7 +42,7 @@ impl<T> RwStack<T> {
         }
 
         let mut guard = self.inner[*index].write();
-        assert!(guard.as_ref().is_none());
+        debug_assert!(guard.as_ref().is_none());
         *index += 1;
         guard.replace(element)
     }
@@ -57,7 +57,7 @@ impl<T> RwStack<T> {
 
         *index -= 1;
         let mut guard = self.inner[*index].write();
-        assert!(guard.as_ref().is_some());
+        debug_assert!(guard.as_ref().is_some());
         guard.take()
     }
 

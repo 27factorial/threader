@@ -156,8 +156,8 @@ impl Executor {
 
     /// Spawns a future on this executor.
     pub fn spawn<F>(&self, future: F)
-        where
-            F: Future<Output = ()> + Send + 'static,
+    where
+        F: Future<Output = ()> + Send + 'static,
     {
         let task = Task::arc(future, &self.injector);
         self.injector.push(task);
