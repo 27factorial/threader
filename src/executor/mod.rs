@@ -68,6 +68,8 @@ fn create_thread(
             worker.pop()
         });
 
+        // We're not relying on this value to synchronize,
+        // so an atomic load is okay here.
         if handle.shutdown.load(Ordering::Relaxed) {
             return;
         }
@@ -86,7 +88,7 @@ fn create_thread(
             None => {
                 let backoff = Backoff::new();
                 loop {
-                    if handle.shutdown.load(Ordering::Acquire) {
+                    if handle.shutdown.load(Ordering::Relaxed) {
                         // we've been ordered to shut down.
                         return;
                     } else if !injector.is_empty() {
