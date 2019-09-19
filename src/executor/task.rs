@@ -26,10 +26,6 @@ type ExecutorFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 /// A task that can be run on an executor.
 #[derive(Debug)]
 pub(super) struct Task {
-    /// The future contained in the task. It is a wrapper around
-    /// `UnsafeCell<ExecutorFuture>` that ensures unique access to the
-    /// wrapped future. Also contains the injector for rescheduling the
-    /// task.
     inner: Inner,
 }
 
@@ -93,17 +89,9 @@ pub(super) struct FutureInUse;
 /// It is essentially a wrapper around `UnsafeCell<ExecutorFuture>`
 /// that ensures unique access to the underlying future.
 struct Inner {
-    /// A flag indicating whether the inner future has already returned `Poll::Ready`
-    /// which prevents the `Task` from being scheduled again. The executor sets this when
-    /// the future returns `Poll::Ready` for the first time.
     complete: AtomicBool,
-    /// A flag used to indicate that the future is currently in use. This is set to true when
-    /// the future is loaded into an `AtomicFutureRef`.
     flag: AtomicBool,
-    /// The contained future.
     future: UnsafeCell<ExecutorFuture>,
-    /// The injector used for waking the task when it is necessary
-    /// to do so.
     injector: &'static Injector<Arc<Task>>,
 }
 

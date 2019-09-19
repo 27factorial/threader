@@ -9,7 +9,6 @@ use {
     num_cpus,
     once_cell::sync::Lazy,
     std::{
-        cell::Cell,
         sync::{
             atomic::{AtomicBool, Ordering},
             Arc,
@@ -20,19 +19,9 @@ use {
 };
 
 /// The injector used as the point of entry for new tasks. This will
-/// be lazily initialized on its first access.
+/// be lazily initialized on its first access. Note that all executors
+/// of the same type will share an injector queue.
 static INJECTOR: Lazy<Injector<Arc<Task>>> = Lazy::new(|| Injector::new());
-
-thread_local! {
-    static RESCHEDULE: Cell<bool> = Cell::new(false);
-}
-
-/// Signals to the current executor to immediately push this task back onto
-/// the injector queue. Useful for splitting up expensive computations in a
-/// future.
-pub fn reschedule() {
-    RESCHEDULE.with(|c| c.set(true));
-}
 
 fn create_thread(
     handle: Arc<ExecutorHandle>,
@@ -92,13 +81,6 @@ fn create_thread(
                     // prevents the task from being rescheduled, in case of
                     // bad future implementations.
                     task.complete();
-                }
-
-                let reschedule = RESCHEDULE.with(|c| c.get());
-
-                if !task.is_complete() && reschedule {
-                    injector.push(task);
-                    RESCHEDULE.with(|c| c.set(false));
                 }
             }
             None => {
@@ -174,8 +156,8 @@ impl Executor {
 
     /// Spawns a future on this executor.
     pub fn spawn<F>(&self, future: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
+        where
+            F: Future<Output = ()> + Send + 'static,
     {
         let task = Task::arc(future, &self.injector);
         self.injector.push(task);
