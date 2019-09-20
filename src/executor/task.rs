@@ -107,8 +107,8 @@ impl Inner {
         }
     }
 
-    /// Returns a unique guard to the contained future, spinning if
-    /// the future is currently in use.
+    /// Returns a unique guard to the contained future, spinning in
+    /// an exponential backoff loop if the future is currently in use.
     fn future(&self) -> FutureRef<'_> {
         use Ordering::{AcqRel, Acquire};
 
