@@ -75,7 +75,7 @@ fn create_thread(
         }
 
         match task.take() {
-            Some(task) => {
+            Some(task) => if !task.is_complete() {
                 let waker = waker_ref(&task);
                 let mut cx = Context::from_waker(&*waker);
 
@@ -196,6 +196,9 @@ mod tests {
     use crossbeam::channel;
     use futures::future;
     use std::time::Instant;
+    use parking_lot::Mutex;
+    use futures::task::Waker;
+    use std::pin::Pin;
 
     #[test]
     fn simple() {
@@ -233,6 +236,52 @@ mod tests {
     }
 
     #[test]
+    fn bad_future() {
+        // A future that spawns a thread, returns Poll::Ready(()), and
+        // keeps trying to reschedule itself on the executor.
+        struct BadFuture {
+            shared: Arc<Mutex<Option<Waker>>>,
+        }
+
+        impl BadFuture {
+            fn new() -> BadFuture {
+                let shared: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
+                let thread_shared = Arc::clone(&shared);
+                thread::spawn(move || {
+                    loop {
+                        let guard = thread_shared.lock();
+
+                        if let Some(waker) = guard.as_ref() {
+                            waker.clone().wake();
+                        }
+                    }
+                });
+
+                BadFuture {
+                    shared,
+                }
+            }
+        }
+
+        impl Future for BadFuture {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                let mut guard = self.shared.lock();
+                *guard = Some(cx.waker().clone());
+                Poll::Ready(())
+            }
+        }
+
+        let executor = Executor::new(None);
+
+        for _ in 0..50 {
+            executor.spawn(BadFuture::new());
+        }
+    }
+
+    #[test]
+    #[ignore]
     fn time() {
         let executor = Executor::new(16384.into());
         eprintln!("threader time test starting...");
