@@ -40,7 +40,7 @@ impl Task {
         Task { inner }
     }
 
-    /// Creates a new `Task` containing the provided future.
+    /// Creates a new `Task` containing the provided future and wraps it in an Arc.
     pub(super) fn arc<F>(future: F, injector: &'static Injector<Arc<Task>>) -> Arc<Task>
     where
         F: Future<Output = ()> + Send + 'static,
