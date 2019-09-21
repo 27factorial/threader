@@ -81,10 +81,6 @@ impl ArcWake for Task {
     }
 }
 
-/// A zero-sized struct indicating that the current future is in use.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(super) struct FutureInUse;
-
 /// A wrapper for the future contained inside of a `Task`.
 /// It is essentially a wrapper around `UnsafeCell<ExecutorFuture>`
 /// that ensures unique access to the underlying future.
