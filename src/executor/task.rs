@@ -1,21 +1,15 @@
-use super::ExecutorHandle;
-
 use {
-    crossbeam::{
-        self,
-        deque::Injector,
-        utils::{Backoff, CachePadded},
-    },
+    crossbeam::{deque::Injector, utils::Backoff},
     futures::{future::Future, task::ArcWake},
     std::{
-        cell::{Cell, UnsafeCell},
+        cell::UnsafeCell,
         fmt,
         ops::{Deref, DerefMut, Drop},
         pin::Pin,
         ptr::NonNull,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Weak,
+            Arc,
         },
     },
 };
