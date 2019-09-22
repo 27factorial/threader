@@ -170,7 +170,7 @@ impl Drop for Executor {
     fn drop(&mut self) {
         // Notify threads that may be in the middle of searching for tasks
         // or executing a future that they should shut down.
-        self.handle.shutdown.store(true, Ordering::Release);
+        self.handle.shutdown.store(true, Ordering::Relaxed);
 
         while !self.injector.is_empty() {
             let _ = self.injector.steal();
@@ -283,7 +283,7 @@ mod tests {
     #[test]
     #[ignore]
     fn time() {
-        let executor = Executor::new(16384.into());
+        let executor = Executor::new(12.into());
         eprintln!("threader time test starting...");
         let start = Instant::now();
 
