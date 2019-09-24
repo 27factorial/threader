@@ -76,6 +76,8 @@ impl EventQueue {
             }
         }
 
+        self.events.clear();
+
         Ok(())
     }
 
