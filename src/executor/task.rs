@@ -1,21 +1,15 @@
-use super::ExecutorHandle;
-
 use {
-    crossbeam::{
-        self,
-        deque::Injector,
-        utils::{Backoff, CachePadded},
-    },
+    crossbeam::{deque::Injector, utils::Backoff},
     futures::{future::Future, task::ArcWake},
     std::{
-        cell::{Cell, UnsafeCell},
+        cell::UnsafeCell,
         fmt,
         ops::{Deref, DerefMut, Drop},
         pin::Pin,
         ptr::NonNull,
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc, Weak,
+            Arc,
         },
     },
 };
@@ -81,10 +75,6 @@ impl ArcWake for Task {
     }
 }
 
-/// A zero-sized struct indicating that the current future is in use.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub(super) struct FutureInUse;
-
 /// A wrapper for the future contained inside of a `Task`.
 /// It is essentially a wrapper around `UnsafeCell<ExecutorFuture>`
 /// that ensures unique access to the underlying future.
@@ -107,8 +97,8 @@ impl Inner {
         }
     }
 
-    /// Returns a unique guard to the contained future, spinning if
-    /// the future is currently in use.
+    /// Returns a unique guard to the contained future, spinning in
+    /// an exponential backoff loop if the future is currently in use.
     fn future(&self) -> FutureRef<'_> {
         use Ordering::{AcqRel, Acquire};
 
