@@ -18,10 +18,8 @@ const MAX_EVENTS: usize = 8192;
 /// The event queue. This is the part of the thread pool
 /// that drives IO resources using the system selector.
 pub struct EventQueue {
-    poll: Poll,
-    events: Events,
+    inner: Arc<Inner>,
     token: AtomicUsize,
-    scheduled: HashMap<Token, Arc<Handler>>,
 }
 
 impl EventQueue {
@@ -39,7 +37,7 @@ impl EventQueue {
 
     /// Registers a new IO handle with this event queue, tracking the events
     /// it produces.
-    pub fn register<E: Evented>(&mut self, io: &E) -> io::Result<Arc<Handler>> {
+    pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<EventHandler>> {
         let id = self.token.fetch_add(1, Ordering::AcqRel);
 
         if id == usize::MAX {
@@ -52,31 +50,37 @@ impl EventQueue {
         let token = Token(id);
         let ready = Ready::readable() | Ready::writable();
         let opts = PollOpt::level();
-        let handler = Arc::new(Handler {
+        let handler = Arc::new(EventHandler {
             state: AtomicUsize::new(0),
             waker: Mutex::new(None),
         });
 
-        self.poll.register(io, token, ready, opts)?;
-        self.scheduled.insert(token, Arc::clone(&handler));
+        self.inner.poll.register(io, token, ready, opts)?;
+        self.inner
+            .scheduled
+            .lock()
+            .insert(token, Arc::clone(&handler));
 
         Ok(handler)
     }
 
     pub fn advance(&mut self) -> io::Result<()> {
-        self.poll.poll(&mut self.events, None)?;
+        let scheduled = self.inner.scheduled.lock();
+        let mut events = self.inner.events.lock();
 
-        for event in self.events.iter() {
+        self.inner.poll.poll(&mut events, None)?;
+
+        for event in events.iter() {
             let token = event.token();
 
-            if let Some(handler) = self.scheduled.get(&token) {
+            if let Some(handler) = scheduled.get(&token) {
                 let state = event.readiness().as_usize();
                 handler.state.fetch_or(state, Ordering::AcqRel);
                 handler.wake();
             }
         }
 
-        self.events.clear();
+        events.clear();
 
         Ok(())
     }
@@ -85,21 +89,31 @@ impl EventQueue {
         let capacity = capacity.unwrap_or(MAX_EVENTS);
         let poll = Poll::new()?;
 
-        Ok(EventQueue {
+        let inner = Arc::new(Inner {
             poll,
-            events: Events::with_capacity(capacity),
+            events: Mutex::new(Events::with_capacity(capacity)),
+            scheduled: Mutex::new(HashMap::new()),
+        });
+
+        Ok(EventQueue {
+            inner,
             token: AtomicUsize::new(0),
-            scheduled: HashMap::new(),
         })
     }
 }
 
-pub struct Handler {
+pub struct Inner {
+    poll: Poll,
+    events: Mutex<Events>,
+    scheduled: Mutex<HashMap<Token, Arc<EventHandler>>>,
+}
+
+pub struct EventHandler {
     state: AtomicUsize,
     waker: Mutex<Option<Waker>>,
 }
 
-impl Handler {
+impl EventHandler {
     fn wake(&self) {
         // We don't want to wake if there is no waker,
         // because that means it was a spurious wakeup.
