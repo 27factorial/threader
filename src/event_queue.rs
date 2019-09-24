@@ -1,4 +1,5 @@
 use {
+    crossbeam::queue::SegQueue,
     futures::task::Waker,
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
     parking_lot::Mutex,
@@ -19,7 +20,7 @@ const MAX_EVENTS: usize = 8192;
 /// that drives IO resources using the system selector.
 pub struct EventQueue {
     inner: Arc<Inner>,
-    token: AtomicUsize,
+    current_token: AtomicUsize,
 }
 
 impl EventQueue {
@@ -38,19 +39,26 @@ impl EventQueue {
     /// Registers a new IO handle with this event queue, tracking the events
     /// it produces.
     pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<EventHandler>> {
-        let id = self.token.fetch_add(1, Ordering::AcqRel);
+        let token = match self.inner.tokens.pop() {
+            Ok(token) => token,
+            Err(_) => {
+                let id = self.current_token.fetch_add(1, Ordering::AcqRel);
 
-        if id == usize::MAX {
-            panic!(
-                "Registered more than {} Evented types! How did you manage that?",
-                usize::MAX - 1
-            );
-        }
+                if id == usize::MAX {
+                    panic!(
+                        "Registered more than {} Evented types! How did you manage that?",
+                        usize::MAX - 1
+                    );
+                }
 
-        let token = Token(id);
+                Token(id)
+            }
+        };
+
         let ready = Ready::readable() | Ready::writable();
         let opts = PollOpt::level();
         let handler = Arc::new(EventHandler {
+            token,
             state: AtomicUsize::new(0),
             waker: Mutex::new(None),
         });
@@ -62,6 +70,14 @@ impl EventQueue {
             .insert(token, Arc::clone(&handler));
 
         Ok(handler)
+    }
+
+    pub fn deregister<E: Evented>(&self, io: &E, handler: &EventHandler) -> io::Result<()> {
+        self.inner.poll.deregister(io)?;
+        self.inner.scheduled.lock().remove(&handler.token);
+        self.inner.tokens.push(handler.token);
+
+        Ok(())
     }
 
     pub fn advance(&mut self) -> io::Result<()> {
@@ -91,24 +107,27 @@ impl EventQueue {
 
         let inner = Arc::new(Inner {
             poll,
+            tokens: SegQueue::new(),
             events: Mutex::new(Events::with_capacity(capacity)),
             scheduled: Mutex::new(HashMap::new()),
         });
 
         Ok(EventQueue {
             inner,
-            token: AtomicUsize::new(0),
+            current_token: AtomicUsize::new(0),
         })
     }
 }
 
 pub struct Inner {
     poll: Poll,
+    tokens: SegQueue<Token>,
     events: Mutex<Events>,
     scheduled: Mutex<HashMap<Token, Arc<EventHandler>>>,
 }
 
 pub struct EventHandler {
+    token: Token,
     state: AtomicUsize,
     waker: Mutex<Option<Waker>>,
 }
