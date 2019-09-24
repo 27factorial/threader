@@ -30,7 +30,7 @@ fn create_thread(
 ) -> JoinHandle<()> {
     // helper for this function, not used anywhere else.
     fn steal(stealers: &Vec<Stealer<Arc<Task>>>, worker: &Worker<Arc<Task>>) {
-        for stealer in stealers.iter() {
+        for stealer in stealers {
             loop {
                 match stealer.steal_batch(worker) {
                     Steal::Success(_) => return,
