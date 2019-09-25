@@ -68,8 +68,6 @@ fn create_thread(
             worker.pop()
         });
 
-        // We're not relying on this value to synchronize,
-        // so a relaxed load is okay here.
         if handle.shutdown.load(Ordering::Relaxed) {
             return;
         }
