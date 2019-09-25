@@ -50,7 +50,7 @@ impl Reactor {
         Reactor::new_priv(Some(capacity))
     }
 
-    /// Registers a new IO resource with this event queue.
+    /// Registers a new IO resource with this reactor.
     pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<EventHandler>> {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
@@ -92,6 +92,11 @@ impl Reactor {
         self.shared.tokens.push(handler.token);
 
         Ok(())
+    }
+
+    /// Creates a new handle to this reactor.
+    pub fn handle(&self) -> Handle {
+        Handle(Arc::downgrade(&self.shared))
     }
 
     pub fn advance(&mut self) -> io::Result<()> {
@@ -136,7 +141,7 @@ impl Reactor {
 pub struct Handle(Weak<Shared>);
 
 impl Handle {
-    /// Registers a new IO resource with this event queue.
+    /// Registers a new IO resource with this handle.
     pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<EventHandler>> {
         use self::HandleError::*;
 
@@ -178,7 +183,7 @@ impl Handle {
         }
     }
 
-    /// Deregisters an IO resource with this reactor.
+    /// Deregisters an IO resource with this handle.
     pub fn deregister<E: Evented>(&self, io: &E, handler: &EventHandler) -> Result<()> {
         use self::HandleError::*;
 
