@@ -33,7 +33,7 @@ pub enum HandleError {
     IoError(io::Error),
 }
 
-/// The event queue. This is the part of the thread pool
+/// The reactor. This is the part of the thread pool
 /// that drives IO resources using the system selector.
 pub struct Reactor {
     shared: Arc<Shared>,
@@ -54,7 +54,7 @@ impl Reactor {
     }
 
     /// Registers a new IO resource with this reactor.
-    pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<IoHandle>> {
+    pub fn register<E: Evented>(&self, io: &E, interest: Ready) -> io::Result<Arc<IoHandle>> {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
@@ -160,7 +160,7 @@ impl Handle {
 
                         if id == usize::MAX {
                             panic!(
-                                "Registered more than {} Evented types! How did you manage that?",
+                                "Registered more than {} resources! How did you manage that?",
                                 usize::MAX - 1
                             );
                         }
@@ -247,6 +247,16 @@ impl IoHandle {
     fn register_write(&self, waker: &Waker) {
         *self.write_waker.lock() = Some(waker.clone());
     }
+
+    fn clear_read(&self) {
+        self.state
+            .fetch_and(!Ready::readable().as_usize(), Ordering::AcqRel);
+    }
+
+    fn clear_write(&self) {
+        self.state
+            .fetch_and(!Ready::writable().as_usize(), Ordering::AcqRel);
+    }
 }
 
 pub struct PollResource<E: Evented> {
@@ -257,5 +267,29 @@ pub struct PollResource<E: Evented> {
 impl<E: Evented> PollResource<E> {
     pub fn new(resource: E, handle: Arc<IoHandle>) -> PollResource<E> {
         PollResource { resource, handle }
+    }
+
+    pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
+        let state = Ready::from_usize(self.handle.state.load(Ordering::Acquire));
+
+        if state.is_readable() {
+            self.handle.clear_read();
+            futures::Poll::Ready(state)
+        } else {
+            self.handle.register_read(cx.waker());
+            futures::Poll::Pending
+        }
+    }
+
+    pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
+        let state = Ready::from_usize(self.handle.state.load(Ordering::Acquire));
+
+        if state.is_writable() {
+            self.handle.clear_write();
+            futures::Poll::Ready(state)
+        } else {
+            self.handle.register_write(cx.waker());
+            futures::Poll::Pending
+        }
     }
 }
