@@ -116,7 +116,10 @@ impl Reactor {
             let token = event.token();
 
             if let Some(resource) = scheduled.get(&token) {
-                resource.wake(event.readiness());
+                resource
+                    .state
+                    .fetch_or(event.readiness().as_usize(), Ordering::AcqRel);
+                resource.wake_if_ready(event.readiness());
             }
         }
 
@@ -224,7 +227,7 @@ pub struct IoHandle {
 impl IoHandle {
     /// Checks the ready value, waking the read_waker and write_waker
     /// as necessary.
-    fn wake(&self, ready: Ready) {
+    fn wake_if_ready(&self, ready: Ready) {
         if ready.is_readable() {
             if let Some(waker) = self.read_waker.lock().take() {
                 waker.wake();
