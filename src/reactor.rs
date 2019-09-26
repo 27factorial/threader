@@ -1,6 +1,6 @@
 use {
     crossbeam::queue::SegQueue,
-    futures::task::Waker,
+    futures::task::{AtomicWaker, Waker},
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
     parking_lot::Mutex,
     std::{
@@ -24,7 +24,7 @@ type Result<T> = std::result::Result<T, HandleError>;
 /// or deregistration.
 pub enum HandleError {
     /// Indicates that the reactor that a handle
-    /// references has been dropped.
+    /// references has already -been dropped.
     NoReactor,
     /// Indicates that some IO error occurred.
     IoError(io::Error),
@@ -51,7 +51,7 @@ impl Reactor {
     }
 
     /// Registers a new IO resource with this reactor.
-    pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<EventHandler>> {
+    pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<IoResource>> {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
@@ -70,26 +70,26 @@ impl Reactor {
 
         let ready = Ready::readable() | Ready::writable();
         let opts = PollOpt::level();
-        let handler = Arc::new(EventHandler {
+        let resource = Arc::new(IoResource {
             token,
-            state: AtomicUsize::new(0),
-            waker: Mutex::new(None),
+            read_waker: Mutex::new(None),
+            write_waker: Mutex::new(None),
         });
 
         self.shared.poll.register(io, token, ready, opts)?;
         self.shared
-            .scheduled
+            .resources
             .lock()
-            .insert(token, Arc::clone(&handler));
+            .insert(token, Arc::clone(&resource));
 
-        Ok(handler)
+        Ok(resource)
     }
 
     /// Deregisters an IO resource with this reactor.
-    pub fn deregister<E: Evented>(&self, io: &E, handler: &EventHandler) -> io::Result<()> {
+    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoResource) -> io::Result<()> {
         self.shared.poll.deregister(io)?;
-        self.shared.scheduled.lock().remove(&handler.token);
-        self.shared.tokens.push(handler.token);
+        self.shared.resources.lock().remove(&resource.token);
+        self.shared.tokens.push(resource.token);
 
         Ok(())
     }
@@ -99,18 +99,20 @@ impl Reactor {
         Handle(Arc::downgrade(&self.shared))
     }
 
-    pub fn advance(&mut self) -> io::Result<()> {
-        let scheduled = self.shared.scheduled.lock();
+    /// Polls the reactor once, notifying IO resources if any events
+    /// were detected. This is usually done in a loop, and will most
+    /// likely not return an error unless there was an error with
+    /// the system selector.
+    pub fn poll(&mut self) -> io::Result<()> {
+        let scheduled = self.shared.resources.lock();
 
         self.shared.poll.poll(&mut self.events, None)?;
 
         for event in self.events.iter() {
             let token = event.token();
 
-            if let Some(handler) = scheduled.get(&token) {
-                let state = event.readiness().as_usize();
-                handler.state.fetch_or(state, Ordering::AcqRel);
-                handler.wake();
+            if let Some(resource) = scheduled.get(&token) {
+                resource.wake(event.readiness());
             }
         }
 
@@ -128,7 +130,7 @@ impl Reactor {
             poll,
             tokens: SegQueue::new(),
             current_token: AtomicUsize::new(0),
-            scheduled: Mutex::new(HashMap::new()),
+            resources: Mutex::new(HashMap::new()),
         });
 
         Ok(Reactor {
@@ -142,7 +144,7 @@ pub struct Handle(Weak<Shared>);
 
 impl Handle {
     /// Registers a new IO resource with this handle.
-    pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<EventHandler>> {
+    pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<IoResource>> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
@@ -165,33 +167,33 @@ impl Handle {
 
                 let ready = Ready::readable() | Ready::writable();
                 let opts = PollOpt::level();
-                let handler = Arc::new(EventHandler {
+                let resource = Arc::new(IoResource {
                     token,
-                    state: AtomicUsize::new(0),
-                    waker: Mutex::new(None),
+                    read_waker: Mutex::new(None),
+                    write_waker: Mutex::new(None),
                 });
 
                 inner
                     .poll
                     .register(io, token, ready, opts)
                     .map_err(|io| IoError(io))?;
-                inner.scheduled.lock().insert(token, Arc::clone(&handler));
+                inner.resources.lock().insert(token, Arc::clone(&resource));
 
-                Ok(handler)
+                Ok(resource)
             }
             None => Err(NoReactor),
         }
     }
 
     /// Deregisters an IO resource with this handle.
-    pub fn deregister<E: Evented>(&self, io: &E, handler: &EventHandler) -> Result<()> {
+    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoResource) -> Result<()> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
             Some(inner) => {
                 inner.poll.deregister(io).map_err(|io| IoError(io))?;
-                inner.scheduled.lock().remove(&handler.token);
-                inner.tokens.push(handler.token);
+                inner.resources.lock().remove(&resource.token);
+                inner.tokens.push(resource.token);
 
                 Ok(())
             }
@@ -204,21 +206,39 @@ struct Shared {
     poll: Poll,
     tokens: SegQueue<Token>,
     current_token: AtomicUsize,
-    scheduled: Mutex<HashMap<Token, Arc<EventHandler>>>,
+    resources: Mutex<HashMap<Token, Arc<IoResource>>>,
 }
 
-pub struct EventHandler {
+pub struct IoResource {
     token: Token,
-    state: AtomicUsize,
-    waker: Mutex<Option<Waker>>,
+    read_waker: Mutex<Option<Waker>>,
+    write_waker: Mutex<Option<Waker>>,
 }
 
-impl EventHandler {
-    fn wake(&self) {
-        // We don't want to wake if there is no waker,
-        // because that means it was a spurious wakeup.
-        if let Some(waker) = self.waker.lock().take() {
-            waker.wake();
+impl IoResource {
+    /// Checks the ready value, waking the read_waker and write_waker
+    /// as necessary.
+    fn wake(&self, ready: Ready) {
+        if ready.is_readable() {
+            if let Some(waker) = self.read_waker.lock().take() {
+                waker.wake();
+            }
         }
+
+        if ready.is_writable() {
+            if let Some(waker) = self.write_waker.lock().take() {
+                waker.wake();
+            }
+        }
+    }
+
+    /// Registers a new reading waker.
+    fn register_read(&self, waker: &Waker) {
+        *self.read_waker.lock() = Some(waker.clone());
+    }
+
+    /// Registers a new writing waker.
+    fn register_write(&self, waker: &Waker) {
+        *self.write_waker.lock() = Some(waker.clone());
     }
 }
