@@ -1,6 +1,9 @@
 use {
     crossbeam::queue::SegQueue,
-    futures::task::{AtomicWaker, Waker},
+    futures::{
+        self,
+        task::{AtomicWaker, Context, Waker},
+    },
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
     parking_lot::Mutex,
     std::{
@@ -51,7 +54,7 @@ impl Reactor {
     }
 
     /// Registers a new IO resource with this reactor.
-    pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<IoResource>> {
+    pub fn register<E: Evented>(&self, io: &E) -> io::Result<Arc<IoHandle>> {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
@@ -70,8 +73,9 @@ impl Reactor {
 
         let ready = Ready::readable() | Ready::writable();
         let opts = PollOpt::level();
-        let resource = Arc::new(IoResource {
+        let resource = Arc::new(IoHandle {
             token,
+            state: AtomicUsize::new(0),
             read_waker: Mutex::new(None),
             write_waker: Mutex::new(None),
         });
@@ -86,7 +90,7 @@ impl Reactor {
     }
 
     /// Deregisters an IO resource with this reactor.
-    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoResource) -> io::Result<()> {
+    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoHandle) -> io::Result<()> {
         self.shared.poll.deregister(io)?;
         self.shared.resources.lock().remove(&resource.token);
         self.shared.tokens.push(resource.token);
@@ -144,7 +148,7 @@ pub struct Handle(Weak<Shared>);
 
 impl Handle {
     /// Registers a new IO resource with this handle.
-    pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<IoResource>> {
+    pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<IoHandle>> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
@@ -167,8 +171,9 @@ impl Handle {
 
                 let ready = Ready::readable() | Ready::writable();
                 let opts = PollOpt::level();
-                let resource = Arc::new(IoResource {
+                let resource = Arc::new(IoHandle {
                     token,
+                    state: AtomicUsize::new(0),
                     read_waker: Mutex::new(None),
                     write_waker: Mutex::new(None),
                 });
@@ -185,8 +190,8 @@ impl Handle {
         }
     }
 
-    /// Deregisters an IO resource with this handle.
-    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoResource) -> Result<()> {
+    /// Stops tracking notifications from the provided IO resource.
+    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoHandle) -> Result<()> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
@@ -206,16 +211,17 @@ struct Shared {
     poll: Poll,
     tokens: SegQueue<Token>,
     current_token: AtomicUsize,
-    resources: Mutex<HashMap<Token, Arc<IoResource>>>,
+    resources: Mutex<HashMap<Token, Arc<IoHandle>>>,
 }
 
-pub struct IoResource {
+pub struct IoHandle {
     token: Token,
+    state: AtomicUsize,
     read_waker: Mutex<Option<Waker>>,
     write_waker: Mutex<Option<Waker>>,
 }
 
-impl IoResource {
+impl IoHandle {
     /// Checks the ready value, waking the read_waker and write_waker
     /// as necessary.
     fn wake(&self, ready: Ready) {
@@ -240,5 +246,16 @@ impl IoResource {
     /// Registers a new writing waker.
     fn register_write(&self, waker: &Waker) {
         *self.write_waker.lock() = Some(waker.clone());
+    }
+}
+
+pub struct PollResource<E: Evented> {
+    resource: E,
+    handle: Arc<IoHandle>,
+}
+
+impl<E: Evented> PollResource<E> {
+    pub fn new(resource: E, handle: Arc<IoHandle>) -> PollResource<E> {
+        PollResource { resource, handle }
     }
 }
