@@ -75,7 +75,7 @@ impl Reactor {
         let opts = PollOpt::level();
         let resource = Arc::new(IoHandle {
             token,
-            state: AtomicUsize::new(0),
+            readiness: AtomicUsize::new(0),
             read_waker: Mutex::new(None),
             write_waker: Mutex::new(None),
         });
@@ -117,7 +117,7 @@ impl Reactor {
 
             if let Some(resource) = scheduled.get(&token) {
                 resource
-                    .state
+                    .readiness
                     .fetch_or(event.readiness().as_usize(), Ordering::AcqRel);
                 resource.wake_if_ready(event.readiness());
             }
@@ -176,7 +176,7 @@ impl Handle {
                 let opts = PollOpt::level();
                 let resource = Arc::new(IoHandle {
                     token,
-                    state: AtomicUsize::new(0),
+                    readiness: AtomicUsize::new(0),
                     read_waker: Mutex::new(None),
                     write_waker: Mutex::new(None),
                 });
@@ -219,7 +219,7 @@ struct Shared {
 
 pub struct IoHandle {
     token: Token,
-    state: AtomicUsize,
+    readiness: AtomicUsize,
     read_waker: Mutex<Option<Waker>>,
     write_waker: Mutex<Option<Waker>>,
 }
@@ -252,12 +252,12 @@ impl IoHandle {
     }
 
     fn clear_read(&self) {
-        self.state
+        self.readiness
             .fetch_and(!Ready::readable().as_usize(), Ordering::AcqRel);
     }
 
     fn clear_write(&self) {
-        self.state
+        self.readiness
             .fetch_and(!Ready::writable().as_usize(), Ordering::AcqRel);
     }
 }
@@ -276,7 +276,7 @@ impl<E: Evented> PollResource<E> {
     }
 
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.io_handle.state.load(Ordering::Acquire));
+        let state = Ready::from_usize(self.io_handle.readiness.load(Ordering::Acquire));
 
         if state.is_readable() {
             self.io_handle.clear_read();
@@ -288,7 +288,7 @@ impl<E: Evented> PollResource<E> {
     }
 
     pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.io_handle.state.load(Ordering::Acquire));
+        let state = Ready::from_usize(self.io_handle.readiness.load(Ordering::Acquire));
 
         if state.is_writable() {
             self.io_handle.clear_write();
