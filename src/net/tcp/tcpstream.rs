@@ -22,7 +22,7 @@ impl TcpStream {
         let stream = MioTcpStream::connect(&addr)?;
 
         // The stream will be writable when it's connected. We're assuming
-        // the reactor is being turned here.
+        // the reactor is being polled here.
         let io_waker = reactor::register(&stream, Ready::writable())?;
         let poll_resource = PollResource::new(stream, io_waker);
 
