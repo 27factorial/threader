@@ -268,10 +268,10 @@ pub struct PollResource<E: Evented> {
 }
 
 impl<E: Evented> PollResource<E> {
-    pub fn new(resource: E, handle: Arc<IoHandle>) -> PollResource<E> {
+    pub fn new(resource: E, io_handle: Arc<IoHandle>) -> PollResource<E> {
         PollResource {
             resource,
-            io_handle: handle,
+            io_handle,
         }
     }
 
