@@ -112,14 +112,16 @@ impl Reactor {
     /// likely not return an error unless there was an error with
     /// the system selector.
     pub fn poll(&mut self) -> io::Result<()> {
-        let scheduled = self.shared.resources.lock();
+        let resources = self.shared.resources.lock();
 
-        self.shared.poll.poll(&mut self.events, None)?;
+        while self.events.is_empty() {
+            self.shared.poll.poll(&mut self.events, None)?;
+        }
 
         for event in self.events.iter() {
             let token = event.token();
 
-            if let Some(resource) = scheduled.get(&token) {
+            if let Some(resource) = resources.get(&token) {
                 resource.wake_if_ready(event.readiness());
             }
         }
