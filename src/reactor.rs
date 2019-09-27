@@ -51,6 +51,10 @@ impl Reactor {
     /// Creates a new `Reactor` with the given event
     /// capacity.
     pub fn with_capacity(capacity: usize) -> io::Result<Reactor> {
+        assert_ne!(
+            capacity, 0,
+            "Can not create a reactor which polls for 0 events."
+        );
         Reactor::new_priv(Some(capacity))
     }
 
@@ -72,7 +76,6 @@ impl Reactor {
             }
         };
 
-        let ready = Ready::readable() | Ready::writable();
         let opts = PollOpt::level();
         let io_waker = Arc::new(IoWaker {
             token,
@@ -81,7 +84,7 @@ impl Reactor {
             write_waker: Mutex::new(None),
         });
 
-        self.shared.poll.register(resource, token, ready, opts)?;
+        self.shared.poll.register(resource, token, interest, opts)?;
         self.shared
             .resources
             .lock()
@@ -117,9 +120,6 @@ impl Reactor {
             let token = event.token();
 
             if let Some(resource) = scheduled.get(&token) {
-                resource
-                    .readiness
-                    .fetch_or(event.readiness().as_usize(), Ordering::AcqRel);
                 resource.wake_if_ready(event.readiness());
             }
         }
@@ -148,6 +148,8 @@ impl Reactor {
     }
 }
 
+/// A handle to the reactor. Can be used to register and
+/// deregister resources from other threads.
 #[derive(Debug, Clone)]
 pub struct Handle(Weak<Shared>);
 
@@ -220,6 +222,8 @@ struct Shared {
     resources: Mutex<HashMap<Token, Arc<IoWaker>>>,
 }
 
+/// A struct that associates a resource with two wakers that
+/// correspond to read and write operations.
 #[derive(Debug)]
 pub struct IoWaker {
     token: Token,
@@ -232,6 +236,8 @@ impl IoWaker {
     /// Checks the ready value, waking the read_waker and write_waker
     /// as necessary.
     fn wake_if_ready(&self, ready: Ready) {
+        self.readiness.fetch_or(ready.as_usize(), Ordering::AcqRel);
+
         if ready.is_readable() {
             if let Some(waker) = self.read_waker.lock().take() {
                 waker.wake();
