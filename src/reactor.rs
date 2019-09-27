@@ -156,7 +156,7 @@ pub struct Handle(Weak<Shared>);
 
 impl Handle {
     /// Registers a new IO resource with this handle.
-    pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<IoWaker>> {
+    pub fn register<E: Evented>(&self, resource: &E) -> Result<Arc<IoWaker>> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
@@ -179,7 +179,7 @@ impl Handle {
 
                 let ready = Ready::readable() | Ready::writable();
                 let opts = PollOpt::level();
-                let resource = Arc::new(IoWaker {
+                let io_waker = Arc::new(IoWaker {
                     token,
                     readiness: AtomicUsize::new(0),
                     read_waker: Mutex::new(None),
@@ -188,25 +188,25 @@ impl Handle {
 
                 inner
                     .poll
-                    .register(io, token, ready, opts)
+                    .register(resource, token, ready, opts)
                     .map_err(|io| IoError(io))?;
-                inner.resources.lock().insert(token, Arc::clone(&resource));
+                inner.resources.lock().insert(token, Arc::clone(&io_waker));
 
-                Ok(resource)
+                Ok(io_waker)
             }
             None => Err(NoReactor),
         }
     }
 
     /// Stops tracking notifications from the provided IO resource.
-    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoWaker) -> Result<()> {
+    pub fn deregister<E: Evented>(&self, resource: &E, io_waker: &IoWaker) -> Result<()> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
             Some(inner) => {
-                inner.poll.deregister(io).map_err(|io| IoError(io))?;
-                inner.resources.lock().remove(&resource.token);
-                inner.tokens.push(resource.token);
+                inner.poll.deregister(resource).map_err(|io| IoError(io))?;
+                inner.resources.lock().remove(&io_waker.token);
+                inner.tokens.push(io_waker.token);
 
                 Ok(())
             }
@@ -288,6 +288,12 @@ impl<E: Evented> PollResource<E> {
         }
     }
 
+    pub fn deregister(&self) -> Result<()> {
+        self.handle.deregister(&self.resource, &self.io_waker)
+    }
+}
+
+impl<E: Evented + io::Read> PollResource<E> {
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
@@ -299,7 +305,9 @@ impl<E: Evented> PollResource<E> {
             futures::Poll::Pending
         }
     }
+}
 
+impl<E: Evented + io::Write> PollResource<E> {
     pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
