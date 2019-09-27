@@ -269,18 +269,20 @@ impl IoWaker {
         *self.write_waker.lock() = Some(waker.clone());
     }
 
+    /// Clears the read readiness of this IoWaker.
     fn clear_read(&self) {
         self.readiness
             .fetch_and(!Ready::readable().as_usize(), Ordering::AcqRel);
     }
 
+    /// Clears the write readiness of this IoWaker.
     fn clear_write(&self) {
         self.readiness
             .fetch_and(!Ready::writable().as_usize(), Ordering::AcqRel);
     }
 }
 
-/// A wrapper for types which implement Evented which contains
+/// A wrapper for types which implement Evented that contains
 /// an `IoWaker` and a handle to the associated reactor.
 pub struct PollResource<E: Evented> {
     resource: E,
