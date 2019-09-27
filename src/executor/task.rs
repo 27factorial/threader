@@ -25,21 +25,21 @@ pub(super) struct Task {
 
 impl Task {
     /// Creates a new `Task` containing the provided future.
-    pub(super) fn new<F>(future: F, injector: &'static Injector<Arc<Task>>) -> Task
+    pub(super) fn new<F>(future: F, injector: &'static Injector<Arc<Task>>) -> Self
     where
         F: Future<Output = ()> + Send + 'static,
     {
         let inner = Inner::new(Box::pin(future), injector);
 
-        Task { inner }
+        Self { inner }
     }
 
     /// Creates a new `Task` containing the provided future and wraps it in an Arc.
-    pub(super) fn arc<F>(future: F, injector: &'static Injector<Arc<Task>>) -> Arc<Task>
+    pub(super) fn arc<F>(future: F, injector: &'static Injector<Arc<Self>>) -> Arc<Self>
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        Arc::new(Task::new(future, injector))
+        Arc::new(Self::new(future, injector))
     }
 
     /// Returns the future that is contained in the `inner` field of this
@@ -88,8 +88,8 @@ struct Inner {
 impl Inner {
     /// Creates a new `Inner` instance with the provided future.
     /// the `flag` field is `false` until `Inner::future()` is called.
-    fn new(future: ExecutorFuture, injector: &'static Injector<Arc<Task>>) -> Inner {
-        Inner {
+    fn new(future: ExecutorFuture, injector: &'static Injector<Arc<Task>>) -> Self {
+        Self {
             complete: AtomicBool::new(false),
             flag: AtomicBool::new(false),
             future: UnsafeCell::new(future),
