@@ -74,7 +74,7 @@ impl Reactor {
 
         let ready = Ready::readable() | Ready::writable();
         let opts = PollOpt::level();
-        let resource = Arc::new(IoWaker {
+        let io_waker = Arc::new(IoWaker {
             token,
             readiness: AtomicUsize::new(0),
             read_waker: Mutex::new(None),
@@ -85,9 +85,9 @@ impl Reactor {
         self.shared
             .resources
             .lock()
-            .insert(token, Arc::clone(&resource));
+            .insert(token, Arc::clone(&io_waker));
 
-        Ok(resource)
+        Ok(io_waker)
     }
 
     /// Deregisters an IO resource with this reactor.
@@ -308,6 +308,8 @@ impl<E: Evented> PollResource<E> {
 
 impl<E: Evented> Drop for PollResource<E> {
     fn drop(&mut self) {
+        // it doesn't really matter if an error happens here, since
+        // the resource won't be used later anyway.
         let _ = self.handle.deregister(&self.resource, &self.io_waker);
     }
 }
