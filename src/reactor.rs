@@ -13,6 +13,7 @@ use {
             atomic::{AtomicUsize, Ordering},
             Arc, Weak,
         },
+        time::Duration,
         usize,
     },
 };
@@ -111,12 +112,10 @@ impl Reactor {
     /// were detected. This is usually done in a loop, and will most
     /// likely not return an error unless there was an error with
     /// the system selector.
-    pub fn poll(&mut self) -> io::Result<()> {
+    pub fn poll(&mut self, timeout: Option<Duration>) -> io::Result<usize> {
         let resources = self.shared.resources.lock();
 
-        while self.events.is_empty() {
-            self.shared.poll.poll(&mut self.events, None)?;
-        }
+        let events_polled = self.shared.poll.poll(&mut self.events, timeout)?;
 
         for event in self.events.iter() {
             let token = event.token();
@@ -128,7 +127,7 @@ impl Reactor {
 
         self.events.clear();
 
-        Ok(())
+        Ok(events_polled)
     }
 
     // a private function for reducing code duplication.
