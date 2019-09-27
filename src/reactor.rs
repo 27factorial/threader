@@ -264,34 +264,37 @@ impl IoHandle {
 
 pub struct PollResource<E: Evented> {
     resource: E,
-    handle: Arc<IoHandle>,
+    io_handle: Arc<IoHandle>,
 }
 
 impl<E: Evented> PollResource<E> {
     pub fn new(resource: E, handle: Arc<IoHandle>) -> PollResource<E> {
-        PollResource { resource, handle }
+        PollResource {
+            resource,
+            io_handle: handle,
+        }
     }
 
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.handle.state.load(Ordering::Acquire));
+        let state = Ready::from_usize(self.io_handle.state.load(Ordering::Acquire));
 
         if state.is_readable() {
-            self.handle.clear_read();
+            self.io_handle.clear_read();
             futures::Poll::Ready(state)
         } else {
-            self.handle.register_read(cx.waker());
+            self.io_handle.register_read(cx.waker());
             futures::Poll::Pending
         }
     }
 
     pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.handle.state.load(Ordering::Acquire));
+        let state = Ready::from_usize(self.io_handle.state.load(Ordering::Acquire));
 
         if state.is_writable() {
-            self.handle.clear_write();
+            self.io_handle.clear_write();
             futures::Poll::Ready(state)
         } else {
-            self.handle.register_write(cx.waker());
+            self.io_handle.register_write(cx.waker());
             futures::Poll::Pending
         }
     }
