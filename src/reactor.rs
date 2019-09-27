@@ -223,7 +223,7 @@ struct Shared {
     resources: Mutex<HashMap<Token, Arc<IoWaker>>>,
 }
 
-/// A struct that associates a resource with two wakers that
+/// A struct that associates a resource with two wakers which
 /// correspond to read and write operations.
 #[derive(Debug)]
 pub struct IoWaker {
@@ -273,6 +273,8 @@ impl IoWaker {
     }
 }
 
+/// A wrapper for types which implement Evented which contains
+/// an `IoWaker` and a handle to the associated reactor.
 pub struct PollResource<E: Evented> {
     resource: E,
     io_waker: Arc<IoWaker>,
@@ -280,6 +282,7 @@ pub struct PollResource<E: Evented> {
 }
 
 impl<E: Evented> PollResource<E> {
+    /// Creates a new instance of `PollResource`
     pub fn new(resource: E, io_waker: Arc<IoWaker>, handle: Handle) -> PollResource<E> {
         PollResource {
             resource,
@@ -288,12 +291,14 @@ impl<E: Evented> PollResource<E> {
         }
     }
 
+    /// Deregisters a resource from the reactor that drives it.
     pub fn deregister(&self) -> Result<()> {
         self.handle.deregister(&self.resource, &self.io_waker)
     }
 }
 
 impl<E: Evented + io::Read> PollResource<E> {
+    /// Polls for read readiness.
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
@@ -308,6 +313,7 @@ impl<E: Evented + io::Read> PollResource<E> {
 }
 
 impl<E: Evented + io::Write> PollResource<E> {
+    /// Polls for write readiness.
     pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
