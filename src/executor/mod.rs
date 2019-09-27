@@ -115,7 +115,7 @@ pub struct Executor {
 
 impl Executor {
     /// Creates a new instance of an Executor.
-    pub fn new(count: Option<usize>) -> Executor {
+    pub fn new(count: Option<usize>) -> Self {
         if let Some(0) = count {
             panic!("An executor can not be created with 0 threads.");
         }
@@ -147,7 +147,7 @@ impl Executor {
             vec
         };
 
-        Executor {
+        Self {
             threads,
             handle,
             injector: &INJECTOR,
