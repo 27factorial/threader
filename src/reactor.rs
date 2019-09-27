@@ -325,6 +325,6 @@ impl<E: Evented> Drop for PollResource<E> {
     fn drop(&mut self) {
         // it doesn't really matter if an error happens here, since
         // the resource won't be used later anyway.
-        let _ = self.handle.deregister(&self.resource, &self.io_waker);
+        let _ = self.deregister();
     }
 }
