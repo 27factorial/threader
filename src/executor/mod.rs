@@ -73,14 +73,16 @@ fn create_thread(
         }
 
         match task.take() {
-            Some(task) => if !task.is_complete() {
-                let waker = waker_ref(&task);
-                let mut cx = Context::from_waker(&*waker);
+            Some(task) => {
+                if !task.is_complete() {
+                    let waker = waker_ref(&task);
+                    let mut cx = Context::from_waker(&*waker);
 
-                if let Poll::Ready(()) = task.future().as_mut().poll(&mut cx) {
-                    // prevents the task from being rescheduled, in case of
-                    // bad future implementations.
-                    task.complete();
+                    if let Poll::Ready(()) = task.future().as_mut().poll(&mut cx) {
+                        // prevents the task from being rescheduled, in case of
+                        // bad future implementations.
+                        task.complete();
+                    }
                 }
             }
             None => {
@@ -193,10 +195,10 @@ mod tests {
     use super::*;
     use crossbeam::channel;
     use futures::future;
-    use std::time::Instant;
-    use parking_lot::Mutex;
     use futures::task::Waker;
+    use parking_lot::Mutex;
     use std::pin::Pin;
+    use std::time::Instant;
 
     #[test]
     fn simple() {
@@ -245,19 +247,15 @@ mod tests {
             fn new() -> BadFuture {
                 let shared: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
                 let thread_shared = Arc::clone(&shared);
-                thread::spawn(move || {
-                    loop {
-                        let guard = thread_shared.lock();
+                thread::spawn(move || loop {
+                    let guard = thread_shared.lock();
 
-                        if let Some(waker) = guard.as_ref() {
-                            waker.clone().wake();
-                        }
+                    if let Some(waker) = guard.as_ref() {
+                        waker.clone().wake();
                     }
                 });
 
-                BadFuture {
-                    shared,
-                }
+                BadFuture { shared }
             }
         }
 

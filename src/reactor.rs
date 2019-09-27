@@ -2,6 +2,7 @@ use {
     crossbeam::queue::SegQueue,
     futures::{
         self,
+        future,
         task::{AtomicWaker, Context, Waker},
     },
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
@@ -21,6 +22,10 @@ use {
 
 static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(|| Reactor::new());
 
+pub fn register<E: Evented>(resource: &E, interest: Ready) -> io::Result<Arc<IoWaker>> {
+    DEFAULT_REACTOR.register(resource, interest)
+}
+
 pub fn handle() -> Handle {
     DEFAULT_REACTOR.handle()
 }
@@ -29,7 +34,7 @@ pub fn handle() -> Handle {
 // Reactor::with_capacity()
 const MAX_EVENTS: usize = 2048;
 
-type Result<T> = std::result::Result<T, HandleError>;
+pub type Result<T> = std::result::Result<T, HandleError>;
 
 /// An error that can happen during either registration
 /// or deregistration.
@@ -300,6 +305,16 @@ impl<E: Evented> PollResource<E> {
         Self::new_priv(resource, io_waker, Some(handle))
     }
 
+    /// Gets a reference to the underlying resource.
+    pub fn get_ref(&self) -> &E {
+        &self.resource
+    }
+
+    /// Gets a mutable reference to the underlying resource.
+    pub fn get_mut(&mut self) -> &mut E {
+        &mut self.resource
+    }
+
     /// Deregisters a resource from the reactor that drives it.
     pub fn deregister(&self) -> Result<()> {
         self.handle.deregister(&self.resource, &self.io_waker)
@@ -329,6 +344,11 @@ impl<E: Evented + io::Read> PollResource<E> {
             futures::Poll::Pending
         }
     }
+
+    /// A convenience method for wrapping poll_readable in a future.
+    pub async fn await_readable(&self) -> Ready {
+        future::poll_fn(|cx| self.poll_readable(cx)).await
+    }
 }
 
 impl<E: Evented + io::Write> PollResource<E> {
@@ -343,6 +363,11 @@ impl<E: Evented + io::Write> PollResource<E> {
             self.io_waker.register_write(cx.waker());
             futures::Poll::Pending
         }
+    }
+
+    /// A convenience method for wrapping poll_writable in a future.
+    pub async fn await_writable(&self) -> Ready {
+        future::poll_fn(|cx| self.poll_writable(cx)).await
     }
 }
 
