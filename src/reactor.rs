@@ -306,7 +306,7 @@ impl<E: Evented> PollResource<E> {
     fn new_priv(resource: E, io_waker: Arc<IoWaker>, handle: Option<Handle>) -> Self {
         let handle = handle.unwrap_or_else(|| self::handle());
 
-        PollResource {
+        Self {
             resource,
             io_waker,
             handle,
