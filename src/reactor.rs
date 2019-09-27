@@ -5,6 +5,7 @@ use {
         task::{AtomicWaker, Context, Waker},
     },
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
+    once_cell::sync::Lazy,
     parking_lot::Mutex,
     std::{
         collections::HashMap,
@@ -17,6 +18,12 @@ use {
         usize,
     },
 };
+
+static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(|| Reactor::new());
+
+pub fn handle() -> Handle {
+    DEFAULT_REACTOR.handle()
+}
 
 // This is kind of arbitrary, but can be ignored with
 // Reactor::with_capacity()
@@ -45,18 +52,18 @@ pub struct Reactor {
 impl Reactor {
     /// Creates a new `Reactor` with the default event
     /// capacity.
-    pub fn new() -> io::Result<Reactor> {
-        Reactor::new_priv(None)
+    pub fn new() -> Self {
+        Self::new_priv(None)
     }
 
     /// Creates a new `Reactor` with the given event
     /// capacity.
-    pub fn with_capacity(capacity: usize) -> io::Result<Reactor> {
+    pub fn with_capacity(capacity: usize) -> Self {
         assert_ne!(
             capacity, 0,
             "Can not create a reactor which polls for 0 events."
         );
-        Reactor::new_priv(Some(capacity))
+        Self::new_priv(Some(capacity))
     }
 
     /// Registers a new IO resource with this reactor.
@@ -131,9 +138,9 @@ impl Reactor {
     }
 
     // a private function for reducing code duplication.
-    fn new_priv(capacity: Option<usize>) -> io::Result<Reactor> {
+    fn new_priv(capacity: Option<usize>) -> Reactor {
         let capacity = capacity.unwrap_or(MAX_EVENTS);
-        let poll = Poll::new()?;
+        let poll = Poll::new().expect("Failed to create new Poll instance!");
 
         let shared = Arc::new(Shared {
             poll,
@@ -142,10 +149,10 @@ impl Reactor {
             resources: Mutex::new(HashMap::new()),
         });
 
-        Ok(Reactor {
+        Self {
             shared,
             events: Events::with_capacity(capacity),
-        })
+        }
     }
 }
 
@@ -283,17 +290,27 @@ pub struct PollResource<E: Evented> {
 
 impl<E: Evented> PollResource<E> {
     /// Creates a new instance of `PollResource`
-    pub fn new(resource: E, io_waker: Arc<IoWaker>, handle: Handle) -> PollResource<E> {
-        PollResource {
-            resource,
-            io_waker,
-            handle,
-        }
+    pub fn new(resource: E, io_waker: Arc<IoWaker>) -> Self {
+        Self::new_priv(resource, io_waker, None)
+    }
+
+    pub fn with_handle(resource: E, io_waker: Arc<IoWaker>, handle: Handle) -> Self {
+        Self::new_priv(resource, io_waker, Some(handle))
     }
 
     /// Deregisters a resource from the reactor that drives it.
     pub fn deregister(&self) -> Result<()> {
         self.handle.deregister(&self.resource, &self.io_waker)
+    }
+
+    fn new_priv(resource: E, io_waker: Arc<IoWaker>, handle: Option<Handle>) -> Self {
+        let handle = handle.unwrap_or_else(|| self::handle());
+
+        PollResource {
+            resource,
+            io_waker,
+            handle,
+        }
     }
 }
 
