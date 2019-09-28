@@ -1,8 +1,7 @@
 use {
     crossbeam::queue::SegQueue,
     futures::{
-        self,
-        future,
+        self, future,
         task::{AtomicWaker, Context, Waker},
     },
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
@@ -22,8 +21,12 @@ use {
 
 static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(|| Reactor::new());
 
-pub fn register<E: Evented>(resource: &E, interest: Ready) -> io::Result<Arc<IoWaker>> {
-    DEFAULT_REACTOR.register(resource, interest)
+pub fn register<E: Evented>(
+    resource: &E,
+    interest: Ready,
+    opts: PollOpt,
+) -> io::Result<Arc<IoWaker>> {
+    DEFAULT_REACTOR.register(resource, interest, opts)
 }
 
 pub fn handle() -> Handle {
@@ -72,7 +75,12 @@ impl Reactor {
     }
 
     /// Registers a new IO resource with this reactor.
-    pub fn register<E: Evented>(&self, resource: &E, interest: Ready) -> io::Result<Arc<IoWaker>> {
+    pub fn register<E: Evented>(
+        &self,
+        resource: &E,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<Arc<IoWaker>> {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
@@ -89,7 +97,6 @@ impl Reactor {
             }
         };
 
-        let opts = PollOpt::level();
         let io_waker = Arc::new(IoWaker {
             token,
             readiness: AtomicUsize::new(0),
@@ -104,6 +111,18 @@ impl Reactor {
             .insert(token, Arc::clone(&io_waker));
 
         Ok(io_waker)
+    }
+
+    pub fn reregister<E: Evented>(
+        &self,
+        resource: &E,
+        io_waker: &IoWaker,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<()> {
+        self.shared
+            .poll
+            .reregister(resource, io_waker.token, interest, opts)
     }
 
     /// Deregisters an IO resource with this reactor.
@@ -168,7 +187,12 @@ pub struct Handle(Weak<Shared>);
 
 impl Handle {
     /// Registers a new IO resource with this handle.
-    pub fn register<E: Evented>(&self, resource: &E) -> Result<Arc<IoWaker>> {
+    pub fn register<E: Evented>(
+        &self,
+        resource: &E,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> Result<Arc<IoWaker>> {
         use self::HandleError::*;
 
         match self.0.upgrade() {
@@ -189,8 +213,6 @@ impl Handle {
                     }
                 };
 
-                let ready = Ready::readable() | Ready::writable();
-                let opts = PollOpt::level();
                 let io_waker = Arc::new(IoWaker {
                     token,
                     readiness: AtomicUsize::new(0),
@@ -200,12 +222,30 @@ impl Handle {
 
                 inner
                     .poll
-                    .register(resource, token, ready, opts)
+                    .register(resource, token, interest, opts)
                     .map_err(|io| IoError(io))?;
                 inner.resources.lock().insert(token, Arc::clone(&io_waker));
 
                 Ok(io_waker)
             }
+            None => Err(NoReactor),
+        }
+    }
+
+    pub fn reregister<E: Evented>(
+        &self,
+        resource: &E,
+        io_waker: &IoWaker,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> Result<()> {
+        use self::HandleError::*;
+
+        match self.0.upgrade() {
+            Some(inner) => inner
+                .poll
+                .reregister(resource, io_waker.token, interest, opts)
+                .map_err(|io| IoError(io)),
             None => Err(NoReactor),
         }
     }
@@ -313,6 +353,10 @@ impl<E: Evented> PollResource<E> {
     /// Gets a mutable reference to the underlying resource.
     pub fn get_mut(&mut self) -> &mut E {
         &mut self.resource
+    }
+
+    pub fn reregister(&self, interest: Ready, opts: PollOpt) -> Result<()> {
+        self.handle.reregister(&self.resource, &self.io_waker, interest, opts)
     }
 
     /// Deregisters a resource from the reactor that drives it.
