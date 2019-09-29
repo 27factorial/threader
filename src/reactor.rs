@@ -335,6 +335,11 @@ impl<E: Evented> PollResource<E> {
         &mut self.resource
     }
 
+    /// Clones the internal IoWaker and returns it.
+    pub fn io_waker(&self) -> Arc<IoWaker> {
+        Arc::clone(&self.io_waker)
+    }
+
     pub fn reregister(&self, interest: Ready, opts: PollOpt) -> io::Result<()> {
         self.handle
             .reregister(&self.resource, &self.io_waker, interest, opts)
