@@ -1,10 +1,11 @@
 use {
     crossbeam::queue::SegQueue,
     futures::{
-        self,
+        self, future,
         task::{AtomicWaker, Context, Waker},
     },
     mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
+    once_cell::sync::Lazy,
     parking_lot::Mutex,
     std::{
         collections::HashMap,
@@ -13,25 +14,28 @@ use {
             atomic::{AtomicUsize, Ordering},
             Arc, Weak,
         },
+        time::Duration,
         usize,
     },
 };
 
+static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(|| Reactor::new());
+
+pub fn register<E: Evented>(
+    resource: &E,
+    interest: Ready,
+    opts: PollOpt,
+) -> io::Result<Arc<IoWaker>> {
+    DEFAULT_REACTOR.register(resource, interest, opts)
+}
+
+pub fn handle() -> Handle {
+    DEFAULT_REACTOR.handle()
+}
+
 // This is kind of arbitrary, but can be ignored with
 // Reactor::with_capacity()
 const MAX_EVENTS: usize = 2048;
-
-type Result<T> = std::result::Result<T, HandleError>;
-
-/// An error that can happen during either registration
-/// or deregistration.
-pub enum HandleError {
-    /// Indicates that the reactor that a handle
-    /// references has already -been dropped.
-    NoReactor,
-    /// Indicates that some IO error occurred.
-    IoError(io::Error),
-}
 
 /// The reactor. This is the part of the thread pool
 /// that drives IO resources using the system selector.
@@ -44,22 +48,27 @@ pub struct Reactor {
 impl Reactor {
     /// Creates a new `Reactor` with the default event
     /// capacity.
-    pub fn new() -> io::Result<Reactor> {
-        Reactor::new_priv(None)
+    pub fn new() -> Self {
+        Self::new_priv(None)
     }
 
     /// Creates a new `Reactor` with the given event
     /// capacity.
-    pub fn with_capacity(capacity: usize) -> io::Result<Reactor> {
+    pub fn with_capacity(capacity: usize) -> Self {
         assert_ne!(
             capacity, 0,
             "Can not create a reactor which polls for 0 events."
         );
-        Reactor::new_priv(Some(capacity))
+        Self::new_priv(Some(capacity))
     }
 
     /// Registers a new IO resource with this reactor.
-    pub fn register<E: Evented>(&self, resource: &E, interest: Ready) -> io::Result<Arc<IoWaker>> {
+    pub fn register<E: Evented>(
+        &self,
+        resource: &E,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<Arc<IoWaker>> {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
@@ -76,7 +85,6 @@ impl Reactor {
             }
         };
 
-        let opts = PollOpt::level();
         let io_waker = Arc::new(IoWaker {
             token,
             readiness: AtomicUsize::new(0),
@@ -91,6 +99,18 @@ impl Reactor {
             .insert(token, Arc::clone(&io_waker));
 
         Ok(io_waker)
+    }
+
+    pub fn reregister<E: Evented>(
+        &self,
+        resource: &E,
+        io_waker: &IoWaker,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<()> {
+        self.shared
+            .poll
+            .reregister(resource, io_waker.token, interest, opts)
     }
 
     /// Deregisters an IO resource with this reactor.
@@ -111,28 +131,28 @@ impl Reactor {
     /// were detected. This is usually done in a loop, and will most
     /// likely not return an error unless there was an error with
     /// the system selector.
-    pub fn poll(&mut self) -> io::Result<()> {
-        let scheduled = self.shared.resources.lock();
+    pub fn poll(&mut self, timeout: Option<Duration>) -> io::Result<usize> {
+        let resources = self.shared.resources.lock();
 
-        self.shared.poll.poll(&mut self.events, None)?;
+        let events_polled = self.shared.poll.poll(&mut self.events, timeout)?;
 
         for event in self.events.iter() {
             let token = event.token();
 
-            if let Some(resource) = scheduled.get(&token) {
+            if let Some(resource) = resources.get(&token) {
                 resource.wake_if_ready(event.readiness());
             }
         }
 
         self.events.clear();
 
-        Ok(())
+        Ok(events_polled)
     }
 
     // a private function for reducing code duplication.
-    fn new_priv(capacity: Option<usize>) -> io::Result<Reactor> {
+    fn new_priv(capacity: Option<usize>) -> Reactor {
         let capacity = capacity.unwrap_or(MAX_EVENTS);
-        let poll = Poll::new()?;
+        let poll = Poll::new().expect("Failed to create new Poll instance!");
 
         let shared = Arc::new(Shared {
             poll,
@@ -141,10 +161,10 @@ impl Reactor {
             resources: Mutex::new(HashMap::new()),
         });
 
-        Ok(Reactor {
+        Self {
             shared,
             events: Events::with_capacity(capacity),
-        })
+        }
     }
 }
 
@@ -155,9 +175,12 @@ pub struct Handle(Weak<Shared>);
 
 impl Handle {
     /// Registers a new IO resource with this handle.
-    pub fn register<E: Evented>(&self, io: &E) -> Result<Arc<IoWaker>> {
-        use self::HandleError::*;
-
+    pub fn register<E: Evented>(
+        &self,
+        resource: &E,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<Arc<IoWaker>> {
         match self.0.upgrade() {
             Some(inner) => {
                 let token = match inner.tokens.pop() {
@@ -176,9 +199,7 @@ impl Handle {
                     }
                 };
 
-                let ready = Ready::readable() | Ready::writable();
-                let opts = PollOpt::level();
-                let resource = Arc::new(IoWaker {
+                let io_waker = Arc::new(IoWaker {
                     token,
                     readiness: AtomicUsize::new(0),
                     read_waker: Mutex::new(None),
@@ -187,29 +208,41 @@ impl Handle {
 
                 inner
                     .poll
-                    .register(io, token, ready, opts)
-                    .map_err(|io| IoError(io))?;
-                inner.resources.lock().insert(token, Arc::clone(&resource));
+                    .register(resource, token, interest, opts)?;
+                inner.resources.lock().insert(token, Arc::clone(&io_waker));
 
-                Ok(resource)
+                Ok(io_waker)
             }
-            None => Err(NoReactor),
+            None => Err(io::Error::new(io::ErrorKind::Other, "No Reactor")),
+        }
+    }
+
+    pub fn reregister<E: Evented>(
+        &self,
+        resource: &E,
+        io_waker: &IoWaker,
+        interest: Ready,
+        opts: PollOpt,
+    ) -> io::Result<()> {
+        match self.0.upgrade() {
+            Some(inner) => inner
+                .poll
+                .reregister(resource, io_waker.token, interest, opts),
+            None => Err(io::Error::new(io::ErrorKind::Other, "No Reactor")),
         }
     }
 
     /// Stops tracking notifications from the provided IO resource.
-    pub fn deregister<E: Evented>(&self, io: &E, resource: &IoWaker) -> Result<()> {
-        use self::HandleError::*;
-
+    pub fn deregister<E: Evented>(&self, resource: &E, io_waker: &IoWaker) -> io::Result<()> {
         match self.0.upgrade() {
             Some(inner) => {
-                inner.poll.deregister(io).map_err(|io| IoError(io))?;
-                inner.resources.lock().remove(&resource.token);
-                inner.tokens.push(resource.token);
+                inner.poll.deregister(resource)?;
+                inner.resources.lock().remove(&io_waker.token);
+                inner.tokens.push(io_waker.token);
 
                 Ok(())
             }
-            None => Err(NoReactor),
+            None => Err(io::Error::new(io::ErrorKind::Other, "No Reactor")),
         }
     }
 }
@@ -222,7 +255,7 @@ struct Shared {
     resources: Mutex<HashMap<Token, Arc<IoWaker>>>,
 }
 
-/// A struct that associates a resource with two wakers that
+/// A struct that associates a resource with two wakers which
 /// correspond to read and write operations.
 #[derive(Debug)]
 pub struct IoWaker {
@@ -261,17 +294,21 @@ impl IoWaker {
         *self.write_waker.lock() = Some(waker.clone());
     }
 
+    /// Clears the read readiness of this IoWaker.
     fn clear_read(&self) {
         self.readiness
             .fetch_and(!Ready::readable().as_usize(), Ordering::AcqRel);
     }
 
+    /// Clears the write readiness of this IoWaker.
     fn clear_write(&self) {
         self.readiness
             .fetch_and(!Ready::writable().as_usize(), Ordering::AcqRel);
     }
 }
 
+/// A wrapper for types which implement Evented that contains
+/// an `IoWaker` and a handle to the associated reactor.
 pub struct PollResource<E: Evented> {
     resource: E,
     io_waker: Arc<IoWaker>,
@@ -279,14 +316,53 @@ pub struct PollResource<E: Evented> {
 }
 
 impl<E: Evented> PollResource<E> {
-    pub fn new(resource: E, io_waker: Arc<IoWaker>, handle: Handle) -> PollResource<E> {
-        PollResource {
+    /// Creates a new instance of `PollResource`
+    pub fn new(resource: E, io_waker: Arc<IoWaker>) -> Self {
+        Self::new_priv(resource, io_waker, None)
+    }
+
+    pub fn with_handle(resource: E, io_waker: Arc<IoWaker>, handle: Handle) -> Self {
+        Self::new_priv(resource, io_waker, Some(handle))
+    }
+
+    /// Gets a reference to the underlying resource.
+    pub fn get_ref(&self) -> &E {
+        &self.resource
+    }
+
+    /// Gets a mutable reference to the underlying resource.
+    pub fn get_mut(&mut self) -> &mut E {
+        &mut self.resource
+    }
+
+    /// Clones the internal IoWaker and returns it.
+    pub fn io_waker(&self) -> Arc<IoWaker> {
+        Arc::clone(&self.io_waker)
+    }
+
+    pub fn reregister(&self, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        self.handle
+            .reregister(&self.resource, &self.io_waker, interest, opts)
+    }
+
+    /// Deregisters a resource from the reactor that drives it.
+    pub fn deregister(&self) -> io::Result<()> {
+        self.handle.deregister(&self.resource, &self.io_waker)
+    }
+
+    fn new_priv(resource: E, io_waker: Arc<IoWaker>, handle: Option<Handle>) -> Self {
+        let handle = handle.unwrap_or_else(|| self::handle());
+
+        Self {
             resource,
             io_waker,
             handle,
         }
     }
+}
 
+impl<E: Evented + io::Read> PollResource<E> {
+    /// Polls for read readiness.
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
@@ -299,6 +375,14 @@ impl<E: Evented> PollResource<E> {
         }
     }
 
+    /// A convenience method for wrapping poll_readable in a future.
+    pub async fn await_readable(&self) -> Ready {
+        future::poll_fn(|cx| self.poll_readable(cx)).await
+    }
+}
+
+impl<E: Evented + io::Write> PollResource<E> {
+    /// Polls for write readiness.
     pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
@@ -310,12 +394,17 @@ impl<E: Evented> PollResource<E> {
             futures::Poll::Pending
         }
     }
+
+    /// A convenience method for wrapping poll_writable in a future.
+    pub async fn await_writable(&self) -> Ready {
+        future::poll_fn(|cx| self.poll_writable(cx)).await
+    }
 }
 
 impl<E: Evented> Drop for PollResource<E> {
     fn drop(&mut self) {
         // it doesn't really matter if an error happens here, since
         // the resource won't be used later anyway.
-        let _ = self.handle.deregister(&self.resource, &self.io_waker);
+        let _ = self.deregister();
     }
 }
