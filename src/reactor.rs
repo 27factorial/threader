@@ -37,18 +37,6 @@ pub fn handle() -> Handle {
 // Reactor::with_capacity()
 const MAX_EVENTS: usize = 2048;
 
-pub type Result<T> = std::result::Result<T, HandleError>;
-
-/// An error that can happen during either registration
-/// or deregistration.
-pub enum HandleError {
-    /// Indicates that the reactor that a handle
-    /// references has already -been dropped.
-    NoReactor,
-    /// Indicates that some IO error occurred.
-    IoError(io::Error),
-}
-
 /// The reactor. This is the part of the thread pool
 /// that drives IO resources using the system selector.
 #[derive(Debug)]
@@ -192,9 +180,7 @@ impl Handle {
         resource: &E,
         interest: Ready,
         opts: PollOpt,
-    ) -> Result<Arc<IoWaker>> {
-        use self::HandleError::*;
-
+    ) -> io::Result<Arc<IoWaker>> {
         match self.0.upgrade() {
             Some(inner) => {
                 let token = match inner.tokens.pop() {
@@ -222,13 +208,12 @@ impl Handle {
 
                 inner
                     .poll
-                    .register(resource, token, interest, opts)
-                    .map_err(|io| IoError(io))?;
+                    .register(resource, token, interest, opts)?;
                 inner.resources.lock().insert(token, Arc::clone(&io_waker));
 
                 Ok(io_waker)
             }
-            None => Err(NoReactor),
+            None => Err(io::Error::new(io::ErrorKind::Other, "No Reactor")),
         }
     }
 
@@ -238,31 +223,26 @@ impl Handle {
         io_waker: &IoWaker,
         interest: Ready,
         opts: PollOpt,
-    ) -> Result<()> {
-        use self::HandleError::*;
-
+    ) -> io::Result<()> {
         match self.0.upgrade() {
             Some(inner) => inner
                 .poll
-                .reregister(resource, io_waker.token, interest, opts)
-                .map_err(|io| IoError(io)),
-            None => Err(NoReactor),
+                .reregister(resource, io_waker.token, interest, opts),
+            None => Err(io::Error::new(io::ErrorKind::Other, "No Reactor")),
         }
     }
 
     /// Stops tracking notifications from the provided IO resource.
-    pub fn deregister<E: Evented>(&self, resource: &E, io_waker: &IoWaker) -> Result<()> {
-        use self::HandleError::*;
-
+    pub fn deregister<E: Evented>(&self, resource: &E, io_waker: &IoWaker) -> io::Result<()> {
         match self.0.upgrade() {
             Some(inner) => {
-                inner.poll.deregister(resource).map_err(|io| IoError(io))?;
+                inner.poll.deregister(resource)?;
                 inner.resources.lock().remove(&io_waker.token);
                 inner.tokens.push(io_waker.token);
 
                 Ok(())
             }
-            None => Err(NoReactor),
+            None => Err(io::Error::new(io::ErrorKind::Other, "No Reactor")),
         }
     }
 }
@@ -355,12 +335,13 @@ impl<E: Evented> PollResource<E> {
         &mut self.resource
     }
 
-    pub fn reregister(&self, interest: Ready, opts: PollOpt) -> Result<()> {
-        self.handle.reregister(&self.resource, &self.io_waker, interest, opts)
+    pub fn reregister(&self, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        self.handle
+            .reregister(&self.resource, &self.io_waker, interest, opts)
     }
 
     /// Deregisters a resource from the reactor that drives it.
-    pub fn deregister(&self) -> Result<()> {
+    pub fn deregister(&self) -> io::Result<()> {
         self.handle.deregister(&self.resource, &self.io_waker)
     }
 
