@@ -139,7 +139,7 @@ impl TcpStream {
 
     pub async fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
-            self.io.reregister(Ready::readable() | Ready::writable(), PollOpt::edge());
+            self.io.reregister(Ready::readable() | Ready::writable(), PollOpt::edge())?;
             self.io.await_readable().await;
 
             match self.io.get_ref().peek(buf) {
