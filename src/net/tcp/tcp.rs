@@ -1,7 +1,7 @@
 use crate::reactor::{self, PollResource};
 use {
     futures::future,
-    mio::{net::TcpStream as MioTcpStream, Ready},
+    mio::{net::TcpStream as MioTcpStream, Ready, PollOpt},
     std::{
         io,
         net::{SocketAddr, TcpStream as StdTcpStream, ToSocketAddrs},
@@ -37,7 +37,7 @@ impl TcpStream {
 
         // The stream will be writable when it's connected. We're assuming
         // the reactor is being polled here.
-        let io_waker = reactor::register(&stream, Ready::writable())?;
+        let io_waker = reactor::register(&stream, Ready::writable(), PollOpt::edge())?;
         let poll_resource = PollResource::new(stream, io_waker);
 
         poll_resource.await_writable().await;
