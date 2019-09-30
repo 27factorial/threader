@@ -272,12 +272,14 @@ impl IoWaker {
         self.readiness.fetch_or(ready.as_usize(), Ordering::SeqCst);
 
         if ready.is_readable() {
+            self.clear_read();
             if let Some(waker) = self.read_waker.lock().take() {
                 waker.wake();
             }
         }
 
         if ready.is_writable() {
+            self.clear_write();
             if let Some(waker) = self.write_waker.lock().take() {
                 waker.wake();
             }
