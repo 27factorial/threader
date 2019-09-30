@@ -139,7 +139,8 @@ impl TcpStream {
 
     pub async fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
-            self.io.reregister(Ready::readable() | Ready::writable(), PollOpt::edge())?;
+            // Wait for data to come in on the socket if it wasn't there already.
+            // If this was a spurious wakeup, we'll just loop around back to here.
             self.io.await_readable().await;
 
             match self.io.get_ref().peek(buf) {
@@ -148,6 +149,5 @@ impl TcpStream {
                 _ => (),
             }
         }
-
     }
 }
