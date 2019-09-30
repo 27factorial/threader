@@ -72,7 +72,7 @@ impl Reactor {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
-                let id = self.shared.current_token.fetch_add(1, Ordering::AcqRel);
+                let id = self.shared.current_token.fetch_add(1, Ordering::SeqCst);
 
                 if id == usize::MAX {
                     panic!(
@@ -186,7 +186,7 @@ impl Handle {
                 let token = match inner.tokens.pop() {
                     Ok(token) => token,
                     Err(_) => {
-                        let id = inner.current_token.fetch_add(1, Ordering::AcqRel);
+                        let id = inner.current_token.fetch_add(1, Ordering::SeqCst);
 
                         if id == usize::MAX {
                             panic!(
@@ -269,7 +269,7 @@ impl IoWaker {
     /// Checks the ready value, waking the read_waker and write_waker
     /// as necessary.
     fn wake_if_ready(&self, ready: Ready) {
-        self.readiness.fetch_or(ready.as_usize(), Ordering::AcqRel);
+        self.readiness.fetch_or(ready.as_usize(), Ordering::SeqCst);
 
         if ready.is_readable() {
             if let Some(waker) = self.read_waker.lock().take() {
@@ -297,13 +297,13 @@ impl IoWaker {
     /// Clears the read readiness of this IoWaker.
     fn clear_read(&self) {
         self.readiness
-            .fetch_and(!Ready::readable().as_usize(), Ordering::AcqRel);
+            .fetch_and(!Ready::readable().as_usize(), Ordering::SeqCst);
     }
 
     /// Clears the write readiness of this IoWaker.
     fn clear_write(&self) {
         self.readiness
-            .fetch_and(!Ready::writable().as_usize(), Ordering::AcqRel);
+            .fetch_and(!Ready::writable().as_usize(), Ordering::SeqCst);
     }
 }
 
@@ -364,7 +364,7 @@ impl<E: Evented> PollResource<E> {
 impl<E: Evented + io::Read> PollResource<E> {
     /// Polls for read readiness.
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
+        let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
         if state.is_readable() {
             self.io_waker.clear_read();
@@ -384,7 +384,7 @@ impl<E: Evented + io::Read> PollResource<E> {
 impl<E: Evented + io::Write> PollResource<E> {
     /// Polls for write readiness.
     pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
+        let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
         if state.is_writable() {
             self.io_waker.clear_write();
