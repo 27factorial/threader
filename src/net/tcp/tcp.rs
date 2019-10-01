@@ -69,9 +69,10 @@ impl TcpStream {
         self.io.get_ref().local_addr()
     }
 
-    // Private because reading concurrently from the same socket
-    // can lead to unexpected results. One should prefer to use
-    // the split() method.
+    // Private because concurrently reading from or writing to
+    // the same socket can lead to unexpected results, and there
+    // should therefore be at most one reader _and_ one writer. One
+    // should prefer to use the split() method.
     fn try_clone(&self) -> io::Result<TcpStream> {
         let stream = self.io.get_ref().try_clone()?;
         let io_waker = self.io.io_waker();
