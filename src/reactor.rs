@@ -272,14 +272,12 @@ impl IoWaker {
         self.readiness.fetch_or(ready.as_usize(), Ordering::SeqCst);
 
         if ready.is_readable() {
-            self.clear_read();
             if let Some(waker) = self.read_waker.lock().take() {
                 waker.wake();
             }
         }
 
         if ready.is_writable() {
-            self.clear_write();
             if let Some(waker) = self.write_waker.lock().take() {
                 waker.wake();
             }
@@ -369,6 +367,7 @@ impl<E: Evented + io::Read> PollResource<E> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
         if state.is_readable() {
+            self.io_waker.clear_read();
             futures::Poll::Ready(state)
         } else {
             self.io_waker.register_read(cx.waker());
@@ -388,6 +387,7 @@ impl<E: Evented + io::Write> PollResource<E> {
         let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
         if state.is_writable() {
+            self.io_waker.clear_write();
             futures::Poll::Ready(state)
         } else {
             self.io_waker.register_write(cx.waker());
