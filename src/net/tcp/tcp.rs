@@ -4,7 +4,7 @@ use {
     mio::{net::TcpStream as MioTcpStream, PollOpt, Ready},
     std::{
         io,
-        net::{SocketAddr, Shutdown, TcpStream as StdTcpStream, ToSocketAddrs},
+        net::{Shutdown, SocketAddr, TcpStream as StdTcpStream, ToSocketAddrs},
         time::Duration,
     },
 };
@@ -69,7 +69,10 @@ impl TcpStream {
         self.io.get_ref().local_addr()
     }
 
-    pub fn try_clone(&self) -> io::Result<TcpStream> {
+    // Private because reading concurrently from the same socket
+    // can lead to unexpected results. One should prefer to use
+    // the split() method.
+    fn try_clone(&self) -> io::Result<TcpStream> {
         let stream = self.io.get_ref().try_clone()?;
         let io_waker = self.io.io_waker();
         Ok(Self {
@@ -138,14 +141,16 @@ impl TcpStream {
     }
 
     pub async fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
+        use io::ErrorKind::WouldBlock;
+
         loop {
             // Wait for data to come in on the socket if it wasn't there already.
-            // If this was a spurious wakeup, we'll just loop around back to here.
+            // If this was a spurious wakeup, we'll just loop back to here.
             self.io.await_readable().await;
 
             match self.io.get_ref().peek(buf) {
                 Ok(n) => return Ok(n),
-                Err(e) if e.kind() != io::ErrorKind::WouldBlock => return Err(e),
+                Err(e) if e.kind() != WouldBlock => return Err(e),
                 _ => (),
             }
         }
