@@ -88,8 +88,8 @@ impl Reactor {
         let io_waker = Arc::new(IoWaker {
             token,
             readiness: AtomicUsize::new(0),
-            read_waker: Mutex::new(None),
-            write_waker: Mutex::new(None),
+            read_waker: AtomicWaker::new(),
+            write_waker: AtomicWaker::new(),
         });
 
         self.shared.poll.register(resource, token, interest, opts)?;
@@ -202,13 +202,11 @@ impl Handle {
                 let io_waker = Arc::new(IoWaker {
                     token,
                     readiness: AtomicUsize::new(0),
-                    read_waker: Mutex::new(None),
-                    write_waker: Mutex::new(None),
+                    read_waker: AtomicWaker::new(),
+                    write_waker: AtomicWaker::new(),
                 });
 
-                inner
-                    .poll
-                    .register(resource, token, interest, opts)?;
+                inner.poll.register(resource, token, interest, opts)?;
                 inner.resources.lock().insert(token, Arc::clone(&io_waker));
 
                 Ok(io_waker)
@@ -261,8 +259,8 @@ struct Shared {
 pub struct IoWaker {
     token: Token,
     readiness: AtomicUsize,
-    read_waker: Mutex<Option<Waker>>,
-    write_waker: Mutex<Option<Waker>>,
+    read_waker: AtomicWaker,
+    write_waker: AtomicWaker,
 }
 
 impl IoWaker {
@@ -272,26 +270,22 @@ impl IoWaker {
         self.readiness.fetch_or(ready.as_usize(), Ordering::SeqCst);
 
         if ready.is_readable() {
-            if let Some(waker) = self.read_waker.lock().take() {
-                waker.wake();
-            }
+            self.read_waker.wake();
         }
 
         if ready.is_writable() {
-            if let Some(waker) = self.write_waker.lock().take() {
-                waker.wake();
-            }
+            self.write_waker.wake();
         }
     }
 
     /// Registers a new reading waker.
     fn register_read(&self, waker: &Waker) {
-        *self.read_waker.lock() = Some(waker.clone());
+        self.read_waker.register(waker)
     }
 
     /// Registers a new writing waker.
     fn register_write(&self, waker: &Waker) {
-        *self.write_waker.lock() = Some(waker.clone());
+        self.write_waker.register(waker)
     }
 
     /// Clears the read readiness of this IoWaker.
@@ -350,27 +344,28 @@ impl<E: Evented> PollResource<E> {
         self.handle.deregister(&self.resource, &self.io_waker)
     }
 
-    fn new_priv(resource: E, io_waker: Arc<IoWaker>, handle: Option<Handle>) -> Self {
-        let handle = handle.unwrap_or_else(|| self::handle());
-
-        Self {
-            resource,
-            io_waker,
-            handle,
-        }
-    }
-}
-
-impl<E: Evented + io::Read> PollResource<E> {
     /// Polls for read readiness.
     pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
+        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
-        if state.is_readable() {
+        if readiness.is_readable() {
             self.io_waker.clear_read();
-            futures::Poll::Ready(state)
+            futures::Poll::Ready(readiness)
         } else {
             self.io_waker.register_read(cx.waker());
+            futures::Poll::Pending
+        }
+    }
+
+    /// Polls for write readiness.
+    pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
+        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
+
+        if readiness.is_writable() {
+            self.io_waker.clear_write();
+            futures::Poll::Ready(readiness)
+        } else {
+            self.io_waker.register_write(cx.waker());
             futures::Poll::Pending
         }
     }
@@ -379,25 +374,20 @@ impl<E: Evented + io::Read> PollResource<E> {
     pub async fn await_readable(&self) -> Ready {
         future::poll_fn(|cx| self.poll_readable(cx)).await
     }
-}
-
-impl<E: Evented + io::Write> PollResource<E> {
-    /// Polls for write readiness.
-    pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
-        let state = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
-
-        if state.is_writable() {
-            self.io_waker.clear_write();
-            futures::Poll::Ready(state)
-        } else {
-            self.io_waker.register_write(cx.waker());
-            futures::Poll::Pending
-        }
-    }
 
     /// A convenience method for wrapping poll_writable in a future.
     pub async fn await_writable(&self) -> Ready {
         future::poll_fn(|cx| self.poll_writable(cx)).await
+    }
+
+    fn new_priv(resource: E, io_waker: Arc<IoWaker>, handle: Option<Handle>) -> Self {
+        let handle = handle.unwrap_or_else(|| self::handle());
+
+        Self {
+            resource,
+            io_waker,
+            handle,
+        }
     }
 }
 
