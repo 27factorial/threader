@@ -384,11 +384,11 @@ impl<E: Evented> PollResource<E> {
         let handle = handle.unwrap_or_else(|| self::handle());
         let io_waker = handle.register(&resource, interest, opts)?;
 
-        Self {
+        Ok(Self {
             resource,
             io_waker,
             handle,
-        }
+        })
     }
 }
 
