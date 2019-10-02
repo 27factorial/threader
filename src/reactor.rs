@@ -311,12 +311,12 @@ pub struct PollResource<E: Evented> {
 
 impl<E: Evented> PollResource<E> {
     /// Creates a new instance of `PollResource`
-    pub fn new(resource: E, io_waker: Arc<IoWaker>) -> Self {
-        Self::new_priv(resource, io_waker, None)
+    pub fn new(resource: E, interest: Ready, opts: PollOpt) -> io::Result<Self> {
+        Self::new_priv(resource, interest, opts,  None)
     }
 
-    pub fn with_handle(resource: E, io_waker: Arc<IoWaker>, handle: Handle) -> Self {
-        Self::new_priv(resource, io_waker, Some(handle))
+    pub fn with_handle(resource: E, interest: Ready, opts: PollOpt, handle: Handle) -> io::Result<Self> {
+        Self::new_priv(resource, interest, opts, Some(handle))
     }
 
     /// Gets a reference to the underlying resource.
@@ -380,8 +380,9 @@ impl<E: Evented> PollResource<E> {
         future::poll_fn(|cx| self.poll_writable(cx)).await
     }
 
-    fn new_priv(resource: E, io_waker: Arc<IoWaker>, handle: Option<Handle>) -> Self {
+    fn new_priv(resource: E, interest: Ready, opts: PollOpt, handle: Option<Handle>) -> io::Result<Self> {
         let handle = handle.unwrap_or_else(|| self::handle());
+        let io_waker = handle.register(&resource, interest, opts)?;
 
         Self {
             resource,
