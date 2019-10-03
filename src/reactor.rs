@@ -9,7 +9,7 @@ use {
     parking_lot::Mutex,
     std::{
         collections::HashMap,
-        io,
+        io::{self, Read, Write},
         sync::{
             atomic::{AtomicUsize, Ordering},
             Arc, Weak,
@@ -324,6 +324,16 @@ impl<E: Evented> PollResource<E> {
         Self::new_priv(resource, interest, opts, Some(handle))
     }
 
+    /// Creates a PollResource from another using a different resource but the same
+    /// IoWaker and Handle.
+    pub fn from_other(resource: E, other: &Self) -> Self {
+        Self {
+            resource,
+            io_waker: other.io_waker(),
+            handle: other.handle(),
+        }
+    }
+
     /// Gets a reference to the underlying resource.
     pub fn get_ref(&self) -> &E {
         &self.resource
@@ -337,6 +347,10 @@ impl<E: Evented> PollResource<E> {
     /// Clones the internal IoWaker and returns it.
     pub fn io_waker(&self) -> Arc<IoWaker> {
         Arc::clone(&self.io_waker)
+    }
+
+    pub fn handle(&self) -> Handle {
+        self.handle.clone()
     }
 
     pub fn reregister(&self, interest: Ready, opts: PollOpt) -> io::Result<()> {
@@ -407,5 +421,22 @@ impl<E: Evented> Drop for PollResource<E> {
         // it doesn't really matter if an error happens here, since
         // the resource won't be used later anyway.
         let _ = self.deregister();
+    }
+}
+
+
+impl<E: Evented + Read> Read for PollResource<E> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.resource.read(buf)
+    }
+}
+
+impl<E: Evented + Write> Write for PollResource<E> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.resource.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.resource.flush()
     }
 }
