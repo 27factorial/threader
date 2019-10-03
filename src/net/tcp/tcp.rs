@@ -39,25 +39,21 @@ impl TcpStream {
         // The stream will be writable when it's connected. We're assuming
         // the reactor is being polled here.
         let io_waker = reactor::register(&stream, Ready::writable(), PollOpt::edge())?;
-        let poll_resource = PollResource::new(stream, io_waker);
+        let io = PollResource::new(stream, Ready::readable() | Ready::writable(), PollOpt::edge())?;
 
-        poll_resource.await_writable().await;
+        io.await_writable().await;
 
-        match poll_resource.get_ref().take_error()? {
+        match io.get_ref().take_error()? {
             Some(err) => Err(err),
-            None => Ok(Self { io: poll_resource }),
+            None => Ok(Self { io }),
         }
     }
 
     pub fn from_std(stream: StdTcpStream) -> io::Result<Self> {
         let stream = MioTcpStream::from_stream(stream)?;
-        let io_waker = reactor::register(
-            &stream,
-            Ready::readable() | Ready::writable(),
-            PollOpt::edge(),
-        )?;
+        let io = PollResource::new(stream, Ready::readable() | Ready::writable(), PollOpt::edge())?;
         Ok(Self {
-            io: PollResource::new(stream, io_waker),
+            io,
         })
     }
 
@@ -75,9 +71,8 @@ impl TcpStream {
     // should prefer to use the split() method.
     fn try_clone(&self) -> io::Result<TcpStream> {
         let stream = self.io.get_ref().try_clone()?;
-        let io_waker = self.io.io_waker();
         Ok(Self {
-            io: PollResource::new(stream, io_waker),
+            io: PollResource::from_other(stream, &self.io),
         })
     }
 
@@ -157,3 +152,5 @@ impl TcpStream {
         }
     }
 }
+
+
