@@ -424,7 +424,6 @@ impl<E: Evented> Drop for PollResource<E> {
     }
 }
 
-
 impl<E: Evented + Read> Read for PollResource<E> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.resource.read(buf)
