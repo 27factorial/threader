@@ -19,7 +19,7 @@ use {
     },
 };
 
-static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(|| Reactor::new());
+static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new( Reactor::new);
 
 pub fn register<E: Evented>(
     resource: &E,
@@ -405,7 +405,7 @@ impl<E: Evented> PollResource<E> {
         opts: PollOpt,
         handle: Option<Handle>,
     ) -> io::Result<Self> {
-        let handle = handle.unwrap_or_else(|| self::handle());
+        let handle = handle.unwrap_or_else(self::handle);
         let io_waker = handle.register(&resource, interest, opts)?;
 
         Ok(Self {

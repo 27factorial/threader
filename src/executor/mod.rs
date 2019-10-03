@@ -21,7 +21,7 @@ use {
 /// The injector used as the point of entry for new tasks. This will
 /// be lazily initialized on its first access. Note that all executors
 /// of the same type will share an injector queue.
-static INJECTOR: Lazy<Injector<Arc<Task>>> = Lazy::new(|| Injector::new());
+static INJECTOR: Lazy<Injector<Arc<Task>>> = Lazy::new(Injector::new);
 
 fn create_thread(
     handle: Arc<ExecutorHandle>,
