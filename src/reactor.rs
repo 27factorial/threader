@@ -364,7 +364,7 @@ impl<E: Evented> PollResource<E> {
     }
 
     /// Polls for read readiness.
-    pub fn poll_readable(&self, cx: &mut Context) -> futures::Poll<Ready> {
+    pub fn poll_readable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
         let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
         if readiness.is_readable() {
@@ -377,7 +377,7 @@ impl<E: Evented> PollResource<E> {
     }
 
     /// Polls for write readiness.
-    pub fn poll_writable(&self, cx: &mut Context) -> futures::Poll<Ready> {
+    pub fn poll_writable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
         let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
 
         if readiness.is_writable() {
