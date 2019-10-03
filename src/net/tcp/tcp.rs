@@ -1,13 +1,23 @@
 use crate::reactor::{self, PollResource};
 use {
-    futures::future,
+    futures::{
+        future,
+        task::{Context, Poll},
+        io::{AsyncRead, AsyncWrite},
+    },
     mio::{net::TcpStream as MioTcpStream, PollOpt, Ready},
     std::{
-        io,
+        io::{self, Read, Write},
         net::{Shutdown, SocketAddr, TcpStream as StdTcpStream, ToSocketAddrs},
+        pin::Pin,
         time::Duration,
     },
 };
+
+// convenience function
+fn rw() -> Ready {
+    Ready::readable() | Ready::writable()
+}
 
 pub struct TcpStream {
     io: PollResource<MioTcpStream>,
@@ -38,8 +48,7 @@ impl TcpStream {
 
         // The stream will be writable when it's connected. We're assuming
         // the reactor is being polled here.
-        let io_waker = reactor::register(&stream, Ready::writable(), PollOpt::edge())?;
-        let io = PollResource::new(stream, Ready::readable() | Ready::writable(), PollOpt::edge())?;
+        let io = PollResource::new(stream, rw(), PollOpt::edge())?;
 
         io.await_writable().await;
 
@@ -51,7 +60,7 @@ impl TcpStream {
 
     pub fn from_std(stream: StdTcpStream) -> io::Result<Self> {
         let stream = MioTcpStream::from_stream(stream)?;
-        let io = PollResource::new(stream, Ready::readable() | Ready::writable(), PollOpt::edge())?;
+        let io = PollResource::new(stream, rw(), PollOpt::edge())?;
         Ok(Self {
             io,
         })
@@ -153,4 +162,56 @@ impl TcpStream {
     }
 }
 
+impl AsyncRead for TcpStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        use io::ErrorKind::WouldBlock;
+
+        loop {
+            if self.as_ref().io.poll_readable(cx) == Poll::Pending {
+                return Poll::Pending;
+            }
+
+            match self.as_mut().io.read(buf) {
+                Ok(n) => return Poll::Ready(Ok(n)),
+                Err(e) if e.kind() != WouldBlock => return Poll::Ready(Err(e)),
+                _ => (),
+            }
+        }
+    }
+}
+
+impl AsyncWrite for TcpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        use io::ErrorKind::WouldBlock;
+        loop {
+            // Reregistering makes sure that the reactor will notify us on writable.
+            self.as_ref().io.reregister(rw(), PollOpt::edge())?;
+            if self.as_ref().io.poll_writable(cx) == Poll::Pending {
+                return Poll::Pending;
+            }
+
+            match self.as_mut().io.write(buf) {
+                Ok(n) => return Poll::Ready(Ok(n)),
+                Err(e) if e.kind() != WouldBlock => return Poll::Ready(Err(e)),
+                _ => (),
+            }
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        unimplemented!()
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        unimplemented!()
+    }
+}
 
