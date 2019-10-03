@@ -233,6 +233,12 @@ impl AsyncWrite for TcpStream {
 
     fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         // This immediately closes the socket.
-        Poll::Ready(self.shutdown(Shutdown::Write))
+        loop {
+            match self.shutdown(Shutdown::Write) {
+                Ok(()) => return Poll::Ready(Ok(())),
+                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
+                _ => ()
+            }
+        }
     }
 }
