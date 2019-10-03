@@ -232,22 +232,7 @@ impl AsyncWrite for TcpStream {
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        use io::ErrorKind::WouldBlock;
-
-        // On ready, this immediately closes the write side of the socket.
-        loop {
-            match self.shutdown(Shutdown::Write) {
-                Ok(()) => return Poll::Ready(Ok(())),
-                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
-                Err(e) if e.kind() == WouldBlock => {
-                    if let Err(e) = self.as_ref().io.reregister(rw(), PollOpt::edge()) {
-                        return Poll::Ready(Err(e));
-                    } else if self.as_ref().io.poll_writable(cx) == Poll::Pending {
-                        return Poll::Pending;
-                    }
-                },
-                _ => (),
-            }
-        }
+        // This immediately closes the write side of the socket.
+        Poll::Ready(self.shutdown(Shutdown::Write))
     }
 }
