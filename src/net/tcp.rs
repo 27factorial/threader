@@ -234,7 +234,7 @@ impl AsyncWrite for TcpStream {
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         use io::ErrorKind::WouldBlock;
 
-        // This immediately closes the socket.
+        // On ready, this immediately closes the write side of the socket.
         loop {
             match self.shutdown(Shutdown::Write) {
                 Ok(()) => return Poll::Ready(Ok(())),
