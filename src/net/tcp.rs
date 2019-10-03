@@ -1,9 +1,9 @@
-use crate::reactor::{self, PollResource};
+use crate::reactor::PollResource;
 use {
     futures::{
         future,
-        task::{Context, Poll},
         io::{AsyncRead, AsyncWrite},
+        task::{Context, Poll},
     },
     mio::{net::TcpStream as MioTcpStream, PollOpt, Ready},
     std::{
@@ -17,6 +17,12 @@ use {
 // convenience function
 fn rw() -> Ready {
     Ready::readable() | Ready::writable()
+}
+
+fn is_retry(e: &io::Error) -> bool {
+    use io::ErrorKind::{Interrupted, WouldBlock};
+    let kind = e.kind();
+    kind == WouldBlock || kind == Interrupted
 }
 
 pub struct TcpStream {
@@ -61,9 +67,7 @@ impl TcpStream {
     pub fn from_std(stream: StdTcpStream) -> io::Result<Self> {
         let stream = MioTcpStream::from_stream(stream)?;
         let io = PollResource::new(stream, rw(), PollOpt::edge())?;
-        Ok(Self {
-            io,
-        })
+        Ok(Self { io })
     }
 
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
@@ -171,14 +175,15 @@ impl AsyncRead for TcpStream {
         use io::ErrorKind::WouldBlock;
 
         loop {
-            if self.as_ref().io.poll_readable(cx) == Poll::Pending {
-                return Poll::Pending;
-            }
-
             match self.as_mut().io.read(buf) {
                 Ok(n) => return Poll::Ready(Ok(n)),
-                Err(e) if e.kind() != WouldBlock => return Poll::Ready(Err(e)),
-                _ => (),
+                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
+                Err(e) if e.kind() == WouldBlock => {
+                    if self.as_ref().io.poll_readable(cx) == Poll::Pending {
+                        return Poll::Pending;
+                    }
+                }
+                Err(_) => (), // interrupted.
             }
         }
     }
@@ -192,26 +197,42 @@ impl AsyncWrite for TcpStream {
     ) -> Poll<io::Result<usize>> {
         use io::ErrorKind::WouldBlock;
         loop {
-            // Reregistering makes sure that the reactor will notify us on writable.
-            self.as_ref().io.reregister(rw(), PollOpt::edge())?;
-            if self.as_ref().io.poll_writable(cx) == Poll::Pending {
-                return Poll::Pending;
-            }
-
             match self.as_mut().io.write(buf) {
                 Ok(n) => return Poll::Ready(Ok(n)),
-                Err(e) if e.kind() != WouldBlock => return Poll::Ready(Err(e)),
-                _ => (),
+                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
+                Err(e) if e.kind() == WouldBlock => {
+                    if let Err(e) = self.as_ref().io.reregister(rw(), PollOpt::edge()) {
+                        return Poll::Ready(Err(e));
+                    } else if self.as_ref().io.poll_writable(cx) == Poll::Pending {
+                        return Poll::Pending;
+                    }
+                }
+                Err(_) => (), // interrupted.
             }
         }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        unimplemented!()
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        use io::ErrorKind::WouldBlock;
+
+        loop {
+            match self.as_mut().io.flush() {
+                Ok(_) => return Poll::Ready(Ok(())),
+                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
+                Err(e) if e.kind() == WouldBlock => {
+                    if let Err(e) = self.as_ref().io.reregister(rw(), PollOpt::edge()) {
+                        return Poll::Ready(Err(e));
+                    } else if self.as_ref().io.poll_writable(cx) == Poll::Pending {
+                        return Poll::Pending;
+                    }
+                }
+                Err(_) => (), // interrupted.
+            }
+        }
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        unimplemented!()
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        // This immediately closes the socket.
+        Poll::Ready(self.shutdown(Shutdown::Write))
     }
 }
-
