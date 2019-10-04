@@ -21,8 +21,7 @@ fn rw() -> Ready {
 
 fn is_retry(e: &io::Error) -> bool {
     use io::ErrorKind::{Interrupted, WouldBlock};
-    let kind = e.kind();
-    kind == WouldBlock || kind == Interrupted
+    e.kind() == WouldBlock || e.kind() == Interrupted
 }
 
 pub struct TcpStream {
