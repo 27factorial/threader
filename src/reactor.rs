@@ -19,7 +19,7 @@ use {
     },
 };
 
-static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new( Reactor::new);
+static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(Reactor::new);
 
 pub fn register<E: Evented>(
     resource: &E,

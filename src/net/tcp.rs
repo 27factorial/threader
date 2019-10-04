@@ -195,6 +195,7 @@ impl AsyncWrite for TcpStream {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         use io::ErrorKind::WouldBlock;
+
         loop {
             match self.as_mut().io.write(buf) {
                 Ok(n) => return Poll::Ready(Ok(n)),
