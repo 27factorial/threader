@@ -14,14 +14,22 @@ use {
     },
 };
 
-// convenience function
+// Helper functions
+
+// Returns a Ready value which is readable and writable.
 fn rw() -> Ready {
     Ready::readable() | Ready::writable()
 }
 
+// Checks if the given error is WouldBlock or Interrupted.
 fn is_retry(e: &io::Error) -> bool {
     use io::ErrorKind::{Interrupted, WouldBlock};
     e.kind() == WouldBlock || e.kind() == Interrupted
+}
+
+// Creates a new PollResource<TcpStream> with default values as arguments.
+fn resource_default(stream: MioTcpStream) -> io::Result<PollResource<MioTcpStream>> {
+    PollResource::new(stream, rw(), PollOpt::edge())
 }
 
 pub struct TcpStream {
@@ -34,7 +42,7 @@ impl TcpStream {
 
         // The stream will be writable when it's connected. We're assuming
         // the reactor is being polled here.
-        let io = PollResource::new(stream, rw(), PollOpt::edge())?;
+        let io = resource_default(stream)?;
 
         io.await_writable().await;
 
@@ -46,7 +54,7 @@ impl TcpStream {
 
     pub fn from_std(stream: StdTcpStream) -> io::Result<Self> {
         let stream = MioTcpStream::from_stream(stream)?;
-        let io = PollResource::new(stream, rw(), PollOpt::edge())?;
+        let io = resource_default(stream)?;
         Ok(Self { io })
     }
 
@@ -163,7 +171,7 @@ impl AsyncRead for TcpStream {
                         return Poll::Pending;
                     }
                 }
-                Err(_) => (), // interrupted.
+                _ => (), // interrupted.
             }
         }
     }
