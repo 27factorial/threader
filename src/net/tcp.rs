@@ -14,7 +14,26 @@ use {
     },
 };
 
-// Helper functions
+// Helpers
+
+macro_rules! poll_rw {
+    ($receiver:ident, $delegate:expr, $on_ok:pat, $ret:expr, $poll:expr) => {
+        loop {
+            match $delegate {
+                $on_ok => return ::std::task::Poll::Ready($ret),
+                Err(e) if !is_retry(&e) => return ::std::task::Poll::Ready(Err(e)),
+                Err(e) if e.kind() == ::std::io::ErrorKind::WouldBlock => {
+                    if let Err(e) = $receiver.as_ref().io.reregister(rw(), mio::PollOpt::edge()) {
+                        return ::std::task::Poll::Ready(::std::result::Result::Err(e));
+                    } else if $poll == ::std::task::Poll::Pending {
+                        return ::std::task::Poll::Pending;
+                    }
+                }
+                _ => (), // interrupted.
+            }
+        }
+    }
+}
 
 // Returns a Ready value which is readable and writable.
 fn rw() -> Ready {
@@ -27,7 +46,7 @@ fn is_retry(e: &io::Error) -> bool {
     e.kind() == WouldBlock || e.kind() == Interrupted
 }
 
-// Creates a new PollResource<TcpStream> with default values as arguments.
+// Creates a new PollResource<TcpStream> with default values for registration.
 fn resource_default(stream: MioTcpStream) -> io::Result<PollResource<MioTcpStream>> {
     PollResource::new(stream, rw(), PollOpt::edge())
 }
@@ -160,20 +179,7 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        use io::ErrorKind::WouldBlock;
-
-        loop {
-            match self.as_mut().io.read(buf) {
-                Ok(n) => return Poll::Ready(Ok(n)),
-                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
-                Err(e) if e.kind() == WouldBlock => {
-                    if self.as_ref().io.poll_readable(cx) == Poll::Pending {
-                        return Poll::Pending;
-                    }
-                }
-                _ => (), // interrupted.
-            }
-        }
+        poll_rw!(self, self.as_mut().io.read(buf), Ok(n), Ok(n), self.as_ref().io.poll_readable(cx))
     }
 }
 
@@ -183,44 +189,14 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        use io::ErrorKind::WouldBlock;
-
-        loop {
-            match self.as_mut().io.write(buf) {
-                Ok(n) => return Poll::Ready(Ok(n)),
-                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
-                Err(e) if e.kind() == WouldBlock => {
-                    if let Err(e) = self.as_ref().io.reregister(rw(), PollOpt::edge()) {
-                        return Poll::Ready(Err(e));
-                    } else if self.as_ref().io.poll_writable(cx) == Poll::Pending {
-                        return Poll::Pending;
-                    }
-                }
-                _ => (), // interrupted.
-            }
-        }
+        poll_rw!(self, self.as_mut().io.write(buf), Ok(n), Ok(n), self.as_ref().io.poll_writable(cx))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        use io::ErrorKind::WouldBlock;
-
-        loop {
-            match self.as_mut().io.flush() {
-                Ok(_) => return Poll::Ready(Ok(())),
-                Err(e) if !is_retry(&e) => return Poll::Ready(Err(e)),
-                Err(e) if e.kind() == WouldBlock => {
-                    if let Err(e) = self.as_ref().io.reregister(rw(), PollOpt::edge()) {
-                        return Poll::Ready(Err(e));
-                    } else if self.as_ref().io.poll_writable(cx) == Poll::Pending {
-                        return Poll::Pending;
-                    }
-                }
-                _ => (), // interrupted.
-            }
-        }
+        poll_rw!(self, self.as_mut().io.flush(), Ok(_), Ok(()), self.as_ref().io.poll_writable(cx))
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         // This immediately closes the write side of the socket.
         Poll::Ready(self.shutdown(Shutdown::Write))
     }
