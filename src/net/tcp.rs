@@ -20,8 +20,10 @@ macro_rules! poll_rw {
         loop {
             match $delegate {
                 $on_ok => return ::std::task::Poll::Ready($ret),
-                Err(e) if !is_retry(&e) => return ::std::task::Poll::Ready(Err(e)),
-                Err(e) if e.kind() == ::std::io::ErrorKind::WouldBlock => {
+                ::std::result::Result::Err(e) if !is_retry(&e) => {
+                    return ::std::task::Poll::Ready(Err(e))
+                }
+                ::std::result::Result::Err(e) if e.kind() == ::std::io::ErrorKind::WouldBlock => {
                     if let Err(e) = $receiver.as_ref().io.reregister(rw(), mio::PollOpt::edge()) {
                         return ::std::task::Poll::Ready(::std::result::Result::Err(e));
                     } else if $poll == ::std::task::Poll::Pending {
@@ -45,7 +47,7 @@ fn is_retry(e: &io::Error) -> bool {
     e.kind() == WouldBlock || e.kind() == Interrupted
 }
 
-// Creates a new PollResource<TcpStream> with default values for registration.
+// Creates a new PollResource<MioTcpStream> with default values for registration.
 fn resource_default(stream: MioTcpStream) -> io::Result<PollResource<MioTcpStream>> {
     PollResource::new(stream, rw(), PollOpt::edge())
 }
@@ -159,14 +161,14 @@ impl TcpStream {
         use io::ErrorKind::WouldBlock;
 
         loop {
-            // Wait for data to come in on the socket if it wasn't there already.
-            // If this was a spurious wakeup, we'll just loop back to here.
-            self.io.await_readable().await;
-
             match self.io.get_ref().peek(buf) {
                 Ok(n) => return Ok(n),
-                Err(e) if e.kind() != WouldBlock => return Err(e),
-                _ => (),
+                Err(e) if !is_retry(&e) => return Err(e),
+                Err(e) if e.kind() == WouldBlock => {
+                    self.io.reregister(rw(), PollOpt::edge())?;
+                    self.io.await_readable().await;
+                },
+                _ => (), // interrupted.
             }
         }
     }
