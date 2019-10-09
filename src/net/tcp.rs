@@ -15,7 +15,6 @@ use {
 };
 
 // Helpers
-
 macro_rules! poll_rw {
     ($receiver:ident, $delegate:expr, $on_ok:pat, $ret:expr, $poll:expr) => {
         loop {
@@ -32,7 +31,7 @@ macro_rules! poll_rw {
                 _ => (), // interrupted.
             }
         }
-    }
+    };
 }
 
 // Returns a Ready value which is readable and writable.
@@ -179,7 +178,13 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        poll_rw!(self, self.as_mut().io.read(buf), Ok(n), Ok(n), self.as_ref().io.poll_readable(cx))
+        poll_rw!(
+            self,
+            self.as_mut().io.read(buf),
+            Ok(n),
+            Ok(n),
+            self.as_ref().io.poll_readable(cx)
+        )
     }
 }
 
@@ -189,11 +194,23 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        poll_rw!(self, self.as_mut().io.write(buf), Ok(n), Ok(n), self.as_ref().io.poll_writable(cx))
+        poll_rw!(
+            self,
+            self.as_mut().io.write(buf),
+            Ok(n),
+            Ok(n),
+            self.as_ref().io.poll_writable(cx)
+        )
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        poll_rw!(self, self.as_mut().io.flush(), Ok(_), Ok(()), self.as_ref().io.poll_writable(cx))
+        poll_rw!(
+            self,
+            self.as_mut().io.flush(),
+            Ok(_),
+            Ok(()),
+            self.as_ref().io.poll_writable(cx)
+        )
     }
 
     fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
