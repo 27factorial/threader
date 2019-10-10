@@ -1,4 +1,5 @@
 use super::{Handle, IoWaker};
+use futures::future;
 use mio::{Evented, PollOpt, Ready};
 use std::{
     io::{self, Read, Write},
@@ -6,7 +7,7 @@ use std::{
     task::Context,
 };
 
-/// A type that "observes" changes in the resource's state
+/// A type that "observes" changes in a resource's state
 /// from the reactor, waking from the `IoWaker` if a change
 /// is detected.
 pub struct Observer<E: Evented> {
@@ -16,11 +17,12 @@ pub struct Observer<E: Evented> {
 }
 
 impl<E: Evented> Observer<E> {
-    /// Creates a new instance of `PollResource`
+    /// Creates a new instance of `Observer`
     pub fn new(resource: E, interest: Ready, opts: PollOpt) -> io::Result<Self> {
         Self::new_priv(resource, interest, opts, None)
     }
 
+    /// Creates a new instance of `Observer` with the given reactor handle.
     pub fn with_handle(
         resource: E,
         interest: Ready,
@@ -30,8 +32,8 @@ impl<E: Evented> Observer<E> {
         Self::new_priv(resource, interest, opts, Some(handle))
     }
 
-    /// Creates a PollResource from another using a different resource but the same
-    /// IoWaker and Handle.
+    /// Creates an `Observer` from another using a different resource but the same
+    /// `IoWaker` and `Handle`.
     pub fn from_other(resource: E, other: &Self) -> Self {
         Self {
             resource,
@@ -40,25 +42,27 @@ impl<E: Evented> Observer<E> {
         }
     }
 
-    /// Gets a reference to the underlying resource.
+    /// Returns a reference to the underlying resource.
     pub fn get_ref(&self) -> &E {
         &self.resource
     }
 
-    /// Gets a mutable reference to the underlying resource.
+    /// Returns a mutable reference to the underlying resource.
     pub fn get_mut(&mut self) -> &mut E {
         &mut self.resource
     }
 
-    /// Clones the internal IoWaker and returns it.
+    /// Clones the internal `IoWaker` and returns it.
     pub fn io_waker(&self) -> Arc<IoWaker> {
         Arc::clone(&self.io_waker)
     }
 
+    /// Clones the internal `Handle` and returns it.
     pub fn handle(&self) -> Handle {
         self.handle.clone()
     }
 
+    /// Reregisters the underlying resource with the internal `Handle`.
     pub fn reregister(&self, interest: Ready, opts: PollOpt) -> io::Result<()> {
         self.handle
             .reregister(&self.resource, &self.io_waker, interest, opts)
@@ -111,7 +115,7 @@ impl<E: Evented> Observer<E> {
         opts: PollOpt,
         handle: Option<Handle>,
     ) -> io::Result<Self> {
-        let handle = handle.unwrap_or_else(self::handle);
+        let handle = handle.unwrap_or_else(super::handle);
         let io_waker = handle.register(&resource, interest, opts)?;
 
         Ok(Self {
