@@ -1,17 +1,14 @@
-use crate::reactor::PollResource;
-use {
-    futures::{
-        future,
-        io::{AsyncRead, AsyncWrite},
-        task::{Context, Poll},
-    },
-    mio::{net::TcpStream as MioTcpStream, PollOpt, Ready},
-    std::{
-        io::{self, Read, Write},
-        net::{Shutdown, SocketAddr, TcpStream as StdTcpStream, ToSocketAddrs},
-        pin::Pin,
-        time::Duration,
-    },
+use crate::reactor::observer::Observer;
+use futures::{
+    io::{AsyncRead, AsyncWrite},
+    task::{Context, Poll},
+};
+use mio::{net::TcpStream as MioTcpStream, PollOpt, Ready};
+use std::{
+    io::{self, Read, Write},
+    net::{Shutdown, SocketAddr, TcpStream as StdTcpStream},
+    pin::Pin,
+    time::Duration,
 };
 
 // Helpers
@@ -48,12 +45,12 @@ fn is_retry(e: &io::Error) -> bool {
 }
 
 // Creates a new PollResource<MioTcpStream> with default values for registration.
-fn resource_default(stream: MioTcpStream) -> io::Result<PollResource<MioTcpStream>> {
-    PollResource::new(stream, rw(), PollOpt::edge())
+fn resource_default(stream: MioTcpStream) -> io::Result<Observer<MioTcpStream>> {
+    Observer::new(stream, rw(), PollOpt::edge())
 }
 
 pub struct TcpStream {
-    io: PollResource<MioTcpStream>,
+    io: Observer<MioTcpStream>,
 }
 
 impl TcpStream {
@@ -93,7 +90,7 @@ impl TcpStream {
     fn try_clone(&self) -> io::Result<TcpStream> {
         let stream = self.io.get_ref().try_clone()?;
         Ok(Self {
-            io: PollResource::from_other(stream, &self.io),
+            io: Observer::from_other(stream, &self.io),
         })
     }
 
@@ -167,7 +164,7 @@ impl TcpStream {
                 Err(e) if e.kind() == WouldBlock => {
                     self.io.reregister(rw(), PollOpt::edge())?;
                     self.io.await_readable().await;
-                },
+                }
                 _ => (), // interrupted.
             }
         }
@@ -218,5 +215,25 @@ impl AsyncWrite for TcpStream {
     fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
         // This immediately closes the write side of the socket.
         Poll::Ready(self.shutdown(Shutdown::Write))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::Executor;
+    use crossbeam::channel;
+    use once_cell::sync::Lazy;
+
+    const EX: Lazy<Executor> = Lazy::new(|| Executor::new(None));
+
+    #[test]
+    fn connect_test() {
+        let (tx, rx) = channel::unbounded::<()>();
+
+        EX.spawn(async {
+            let addr = "172.217.3.174:80".parse().unwrap();
+            let stream = TcpStream::connect(&addr).await;
+        })
     }
 }

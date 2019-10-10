@@ -1,22 +1,23 @@
-use {
-    crossbeam::queue::SegQueue,
-    futures::{
-        self, future,
-        task::{AtomicWaker, Context, Waker},
+mod background;
+pub mod observer;
+
+use crossbeam::queue::SegQueue;
+use futures::{
+    self,
+    task::{AtomicWaker, Waker},
+};
+use mio::{Evented, Events, Poll, PollOpt, Ready, Token};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
+use std::{
+    collections::HashMap,
+    io,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Weak,
     },
-    mio::{Event, Evented, Events, Poll, PollOpt, Ready, Token},
-    once_cell::sync::Lazy,
-    parking_lot::Mutex,
-    std::{
-        collections::HashMap,
-        io::{self, Read, Write},
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            Arc, Weak,
-        },
-        time::Duration,
-        usize,
-    },
+    time::Duration,
+    usize,
 };
 
 static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(Reactor::new);
@@ -132,9 +133,8 @@ impl Reactor {
     /// likely not return an error unless there was an error with
     /// the system selector.
     pub fn poll(&mut self, timeout: Option<Duration>) -> io::Result<usize> {
-        let resources = self.shared.resources.lock();
-
         let events_polled = self.shared.poll.poll(&mut self.events, timeout)?;
+        let resources = self.shared.resources.lock();
 
         for event in self.events.iter() {
             let token = event.token();
@@ -298,144 +298,5 @@ impl IoWaker {
     fn clear_write(&self) {
         self.readiness
             .fetch_and(!Ready::writable().as_usize(), Ordering::SeqCst);
-    }
-}
-
-/// A wrapper for types which implement Evented that contains
-/// an `IoWaker` and a handle to the associated reactor.
-pub struct PollResource<E: Evented> {
-    resource: E,
-    io_waker: Arc<IoWaker>,
-    handle: Handle,
-}
-
-impl<E: Evented> PollResource<E> {
-    /// Creates a new instance of `PollResource`
-    pub fn new(resource: E, interest: Ready, opts: PollOpt) -> io::Result<Self> {
-        Self::new_priv(resource, interest, opts, None)
-    }
-
-    pub fn with_handle(
-        resource: E,
-        interest: Ready,
-        opts: PollOpt,
-        handle: Handle,
-    ) -> io::Result<Self> {
-        Self::new_priv(resource, interest, opts, Some(handle))
-    }
-
-    /// Creates a PollResource from another using a different resource but the same
-    /// IoWaker and Handle.
-    pub fn from_other(resource: E, other: &Self) -> Self {
-        Self {
-            resource,
-            io_waker: other.io_waker(),
-            handle: other.handle(),
-        }
-    }
-
-    /// Gets a reference to the underlying resource.
-    pub fn get_ref(&self) -> &E {
-        &self.resource
-    }
-
-    /// Gets a mutable reference to the underlying resource.
-    pub fn get_mut(&mut self) -> &mut E {
-        &mut self.resource
-    }
-
-    /// Clones the internal IoWaker and returns it.
-    pub fn io_waker(&self) -> Arc<IoWaker> {
-        Arc::clone(&self.io_waker)
-    }
-
-    pub fn handle(&self) -> Handle {
-        self.handle.clone()
-    }
-
-    pub fn reregister(&self, interest: Ready, opts: PollOpt) -> io::Result<()> {
-        self.handle
-            .reregister(&self.resource, &self.io_waker, interest, opts)
-    }
-
-    /// Deregisters a resource from the reactor that drives it.
-    pub fn deregister(&self) -> io::Result<()> {
-        self.handle.deregister(&self.resource, &self.io_waker)
-    }
-
-    /// Polls for read readiness.
-    pub fn poll_readable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
-        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
-
-        if readiness.is_readable() {
-            self.io_waker.clear_read();
-            futures::Poll::Ready(readiness)
-        } else {
-            self.io_waker.register_read(cx.waker());
-            futures::Poll::Pending
-        }
-    }
-
-    /// Polls for write readiness.
-    pub fn poll_writable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
-        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
-
-        if readiness.is_writable() {
-            self.io_waker.clear_write();
-            futures::Poll::Ready(readiness)
-        } else {
-            self.io_waker.register_write(cx.waker());
-            futures::Poll::Pending
-        }
-    }
-
-    /// A convenience method for wrapping poll_readable in a future.
-    pub async fn await_readable(&self) -> Ready {
-        future::poll_fn(|cx| self.poll_readable(cx)).await
-    }
-
-    /// A convenience method for wrapping poll_writable in a future.
-    pub async fn await_writable(&self) -> Ready {
-        future::poll_fn(|cx| self.poll_writable(cx)).await
-    }
-
-    fn new_priv(
-        resource: E,
-        interest: Ready,
-        opts: PollOpt,
-        handle: Option<Handle>,
-    ) -> io::Result<Self> {
-        let handle = handle.unwrap_or_else(self::handle);
-        let io_waker = handle.register(&resource, interest, opts)?;
-
-        Ok(Self {
-            resource,
-            io_waker,
-            handle,
-        })
-    }
-}
-
-impl<E: Evented> Drop for PollResource<E> {
-    fn drop(&mut self) {
-        // it doesn't really matter if an error happens here, since
-        // the resource won't be used later anyway.
-        let _ = self.deregister();
-    }
-}
-
-impl<E: Evented + Read> Read for PollResource<E> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.resource.read(buf)
-    }
-}
-
-impl<E: Evented + Write> Write for PollResource<E> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.resource.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.resource.flush()
     }
 }

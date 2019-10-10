@@ -1,22 +1,19 @@
 mod task;
 
-use {
-    crossbeam::{deque::*, utils::Backoff},
-    futures::{
-        task::{waker_ref, Context, Poll},
-        Future,
-    },
-    num_cpus,
-    once_cell::sync::Lazy,
-    std::{
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
-        thread::{self, JoinHandle},
-    },
-    task::Task,
+use crossbeam::{deque::*, utils::Backoff};
+use futures::{
+    task::{waker_ref, Context, Poll},
+    Future,
 };
+use once_cell::sync::Lazy;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::{self, JoinHandle},
+};
+use task::Task;
 
 /// The injector used as the point of entry for new tasks. This will
 /// be lazily initialized on its first access. Note that all executors
