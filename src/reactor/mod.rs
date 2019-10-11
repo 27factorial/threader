@@ -1,5 +1,5 @@
-mod background;
 pub mod observer;
+pub mod reactor_thread;
 
 use crossbeam::queue::SegQueue;
 use futures::{
