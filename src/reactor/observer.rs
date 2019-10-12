@@ -10,21 +10,21 @@ use std::{
 /// A type that "observes" changes in a resource's state
 /// from the reactor, waking from the `IoWaker` if a change
 /// is detected.
-pub struct Observer<E: Evented> {
-    resource: E,
+pub struct Observer<R: Evented> {
+    resource: R,
     io_waker: Arc<IoWaker>,
     handle: Handle,
 }
 
-impl<E: Evented> Observer<E> {
+impl<R: Evented> Observer<R> {
     /// Creates a new instance of `Observer`
-    pub fn new(resource: E, interest: Ready, opts: PollOpt) -> io::Result<Self> {
+    pub fn new(resource: R, interest: Ready, opts: PollOpt) -> io::Result<Self> {
         Self::new_priv(resource, interest, opts, None)
     }
 
     /// Creates a new instance of `Observer` with the given reactor handle.
     pub fn with_handle(
-        resource: E,
+        resource: R,
         interest: Ready,
         opts: PollOpt,
         handle: Handle,
@@ -34,7 +34,7 @@ impl<E: Evented> Observer<E> {
 
     /// Creates an `Observer` from another using a different resource but the same
     /// `IoWaker` and `Handle`.
-    pub fn from_other(resource: E, other: &Self) -> Self {
+    pub fn from_other(resource: R, other: &Self) -> Self {
         Self {
             resource,
             io_waker: other.io_waker(),
@@ -43,12 +43,12 @@ impl<E: Evented> Observer<E> {
     }
 
     /// Returns a reference to the underlying resource.
-    pub fn get_ref(&self) -> &E {
+    pub fn get_ref(&self) -> &R {
         &self.resource
     }
 
     /// Returns a mutable reference to the underlying resource.
-    pub fn get_mut(&mut self) -> &mut E {
+    pub fn get_mut(&mut self) -> &mut R {
         &mut self.resource
     }
 
@@ -110,7 +110,7 @@ impl<E: Evented> Observer<E> {
     }
 
     fn new_priv(
-        resource: E,
+        resource: R,
         interest: Ready,
         opts: PollOpt,
         handle: Option<Handle>,
