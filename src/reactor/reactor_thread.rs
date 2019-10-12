@@ -10,7 +10,7 @@ use std::{
 };
 
 struct ReactorThread {
-    join_handle: thread::JoinHandle<io::Result<()>>,
+    join_handle: Option<thread::JoinHandle<io::Result<()>>>,
     reactor_handle: Handle,
     wakeup: SetReadiness,
     shutdown: Arc<AtomicBool>,
@@ -26,15 +26,13 @@ impl ReactorThread {
         let shutdown = Arc::new(AtomicBool::new(false));
         let thread_shutdown = Arc::clone(&shutdown);
 
-        let join_handle = thread::Builder::new()
-            .name("threader::reactor::ReactorThread background thread".into())
-            .spawn(move || loop {
-                if thread_shutdown.load(Ordering::Relaxed) {
-                    return Ok(());
-                } else {
-                    reactor.poll(None)?;
-                }
-            })?;
+        let join_handle = Some(thread::Builder::new().spawn(move || loop {
+            if thread_shutdown.load(Ordering::Relaxed) {
+                return Ok(());
+            } else {
+                reactor.poll(None)?;
+            }
+        })?);
 
         Ok(Self {
             join_handle,
@@ -43,6 +41,10 @@ impl ReactorThread {
             shutdown,
             _reg: reg,
         })
+    }
+
+    pub fn handle(&self) -> Handle {
+        self.reactor_handle.clone()
     }
 
     /// Registers a new IO resource with this handle.
@@ -70,11 +72,22 @@ impl ReactorThread {
     pub fn deregister<E: Evented>(&self, resource: &E, io_waker: &IoWaker) -> io::Result<()> {
         self.reactor_handle.deregister(resource, io_waker)
     }
+
+    pub fn shutdown_now(&mut self) -> io::Result<()> {
+        self.wakeup
+            .set_readiness(Ready::readable())
+            .expect("could not set wakeup readiness");
+        self.join_handle
+            .take()
+            .unwrap()
+            .join()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "reactor thread panicked"))?
+    }
 }
 
 impl Drop for ReactorThread {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        let _ = self.wakeup.set_readiness(Ready::readable());
+        let _ = self.shutdown_now();
     }
 }
