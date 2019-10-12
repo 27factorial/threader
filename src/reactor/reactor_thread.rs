@@ -9,7 +9,7 @@ use std::{
     thread,
 };
 
-struct ReactorThread {
+pub struct ReactorThread {
     join_handle: Option<thread::JoinHandle<io::Result<()>>>,
     reactor_handle: Handle,
     wakeup: SetReadiness,
