@@ -50,8 +50,8 @@ impl Background {
     }
 
     /// Returns a handle to inner reactor.
-    pub fn handle(&self) -> &Handle {
-        &self.reactor_handle
+    pub fn handle(&self) -> Handle {
+        self.reactor_handle.clone()
     }
 
     /// Registers a new IO resource with this reactor.
