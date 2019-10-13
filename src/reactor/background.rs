@@ -33,7 +33,7 @@ impl Background {
         let thread_shutdown = Arc::clone(&shutdown);
 
         let join_handle = Some(thread::Builder::new().spawn(move || loop {
-            if thread_shutdown.load(Ordering::SeqCst) {
+            if thread_shutdown.load(Ordering::Relaxed) {
                 return Ok(());
             } else {
                 reactor.poll(None)?;
@@ -50,8 +50,8 @@ impl Background {
     }
 
     /// Returns a handle to inner reactor.
-    pub fn handle(&self) -> Handle {
-        self.reactor_handle.clone()
+    pub fn handle(&self) -> &Handle {
+        &self.reactor_handle
     }
 
     /// Registers a new IO resource with this reactor.
@@ -85,7 +85,7 @@ impl Background {
     /// any errors which happened in the thread where the reactor was
     /// being polled.
     pub fn shutdown_now(&mut self) -> io::Result<()> {
-        self.shutdown.store(true, Ordering::SeqCst);
+        self.shutdown.store(true, Ordering::Relaxed);
         self.wakeup
             .set_readiness(Ready::readable())
             .expect("could not set wakeup readiness");
