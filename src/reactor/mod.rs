@@ -1,6 +1,7 @@
 pub mod background;
 pub mod observer;
 
+use background::Background;
 use crossbeam::queue::SegQueue;
 use futures::{
     self,
@@ -20,7 +21,8 @@ use std::{
     usize,
 };
 
-static DEFAULT_REACTOR: Lazy<Reactor> = Lazy::new(Reactor::new);
+static DEFAULT_REACTOR: Lazy<Background> =
+    Lazy::new(|| Background::new(Reactor::new()).expect("could not create reactor thread"));
 
 pub fn register<E: Evented>(
     resource: &E,
