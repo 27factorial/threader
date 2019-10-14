@@ -6,6 +6,7 @@ use futures::{
     Future,
 };
 use once_cell::sync::Lazy;
+use parking_lot::{Condvar, Mutex};
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -91,8 +92,10 @@ fn create_thread(
                     } else if !injector.is_empty() {
                         // a new task is available.
                         break;
+                    } else if backoff.is_completed() {
+                        let mut guard = handle.mutex.lock();
+                        handle.notify.wait(&mut guard);
                     } else {
-                        // nothing new has happened, so wait.
                         backoff.snooze();
                     }
                 }
@@ -135,6 +138,8 @@ impl Executor {
         let handle = Arc::new(ExecutorHandle {
             stealers: stealers.collect(),
             shutdown: AtomicBool::new(false),
+            mutex: Mutex::new(()),
+            notify: Condvar::new(),
         });
 
         let threads = {
@@ -160,6 +165,7 @@ impl Executor {
     {
         let task = Task::arc(future, &self.injector);
         self.injector.push(task);
+        self.handle.notify.notify_all();
     }
 }
 
@@ -168,6 +174,7 @@ impl Drop for Executor {
         // Notify threads that may be in the middle of searching for tasks
         // or executing a future that they should shut down.
         self.handle.shutdown.store(true, Ordering::Relaxed);
+        self.handle.notify.notify_all();
 
         while !self.injector.is_empty() {
             let _ = self.injector.steal();
@@ -185,6 +192,8 @@ impl Drop for Executor {
 pub(crate) struct ExecutorHandle {
     stealers: Vec<Stealer<Arc<Task>>>,
     shutdown: AtomicBool,
+    mutex: Mutex<()>,
+    notify: Condvar
 }
 
 #[cfg(test)]
