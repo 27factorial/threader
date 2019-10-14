@@ -224,7 +224,6 @@ mod tests {
 
         executor.spawn(async move {
             future::ready(()).await;
-            thread::sleep(Duration::from_secs(20));
             tx.send(0).unwrap();
         });
 
