@@ -1,18 +1,19 @@
 mod task;
 
-use crossbeam::{deque::*, utils::Backoff};
+use crossbeam::{deque::*, sync::WaitGroup, utils::Backoff};
 use futures::{
     task::{waker_ref, Context, Poll},
     Future,
 };
 use once_cell::sync::Lazy;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::RwLock;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     thread::{self, JoinHandle},
+    time::Duration,
 };
 use task::Task;
 
@@ -26,6 +27,14 @@ fn create_thread(
     worker: Worker<Arc<Task>>,
     injector: &'static Injector<Arc<Task>>,
 ) -> JoinHandle<()> {
+    // When the backoff is completed, we should wait for
+    // this long between each iteration of checking the
+    // shutdown status. This prevents using 100% CPU time
+    // but also allows for higher performance by not
+    // sending messages to this thread every time a new
+    // task is available.
+    const MAX_SLEEP: Duration = Duration::from_millis(1);
+
     // helper for this function, not used anywhere else.
     fn steal(stealers: &Vec<Stealer<Arc<Task>>>, worker: &Worker<Arc<Task>>) {
         for stealer in stealers {
@@ -93,8 +102,7 @@ fn create_thread(
                         // a new task is available.
                         break;
                     } else if backoff.is_completed() {
-                        let mut guard = handle.mutex.lock();
-                        handle.notify.wait(&mut guard);
+                        thread::sleep(MAX_SLEEP);
                     } else {
                         backoff.snooze();
                     }
@@ -138,8 +146,6 @@ impl Executor {
         let handle = Arc::new(ExecutorHandle {
             stealers: stealers.collect(),
             shutdown: AtomicBool::new(false),
-            mutex: Mutex::new(()),
-            notify: Condvar::new(),
         });
 
         let threads = {
@@ -165,7 +171,6 @@ impl Executor {
     {
         let task = Task::arc(future, &self.injector);
         self.injector.push(task);
-        self.handle.notify.notify_all();
     }
 }
 
@@ -174,7 +179,6 @@ impl Drop for Executor {
         // Notify threads that may be in the middle of searching for tasks
         // or executing a future that they should shut down.
         self.handle.shutdown.store(true, Ordering::Relaxed);
-        self.handle.notify.notify_all();
 
         while !self.injector.is_empty() {
             let _ = self.injector.steal();
@@ -192,8 +196,6 @@ impl Drop for Executor {
 pub(crate) struct ExecutorHandle {
     stealers: Vec<Stealer<Arc<Task>>>,
     shutdown: AtomicBool,
-    mutex: Mutex<()>,
-    notify: Condvar
 }
 
 #[cfg(test)]
@@ -222,6 +224,7 @@ mod tests {
 
         executor.spawn(async move {
             future::ready(()).await;
+            thread::sleep(Duration::from_secs(20));
             tx.send(0).unwrap();
         });
 
