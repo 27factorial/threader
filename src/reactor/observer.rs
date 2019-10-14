@@ -75,7 +75,7 @@ impl<R: Evented> Observer<R> {
 
     /// Polls for read readiness.
     pub fn poll_readable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
-        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
+        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
         if readiness.is_readable() {
             self.io_waker.clear_read();
@@ -88,7 +88,7 @@ impl<R: Evented> Observer<R> {
 
     /// Polls for write readiness.
     pub fn poll_writable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
-        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::SeqCst));
+        let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
         if readiness.is_writable() {
             self.io_waker.clear_write();
