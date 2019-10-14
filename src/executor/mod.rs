@@ -33,7 +33,7 @@ fn create_thread(
     // but also allows for higher performance by not
     // sending messages to this thread every time a new
     // task is available.
-    const MAX_SLEEP: Duration = Duration::from_millis(1);
+    const MAX_SLEEP: Duration = Duration::from_nanos(1000);
 
     // helper for this function, not used anywhere else.
     fn steal(stealers: &Vec<Stealer<Arc<Task>>>, worker: &Worker<Arc<Task>>) {
