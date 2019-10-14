@@ -3,15 +3,21 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     task::{Context, Poll},
 };
-use mio::{net::TcpStream as MioTcpStream, PollOpt, Ready};
+use mio::{
+    net::{
+        TcpStream as MioTcpStream,
+        TcpListener as MioTcpListener,
+    },
+    PollOpt, Ready
+};
 use std::{
     io::{self, Read, Write},
-    net::{Shutdown, SocketAddr, TcpStream as StdTcpStream},
+    net::{Shutdown, SocketAddr, TcpStream as StdTcpStream, TcpListener as StdTcpListener},
     pin::Pin,
     time::Duration,
 };
 
-// Helpers
+// =============== HELPERS =============== //
 macro_rules! poll_rw {
     ($receiver:ident, $delegate:expr, $on_ok:pat, $ret:expr, $poll:expr) => {
         loop {
@@ -44,13 +50,20 @@ fn is_retry(e: &io::Error) -> bool {
     e.kind() == WouldBlock || e.kind() == Interrupted
 }
 
-// Creates a new PollResource<MioTcpStream> with default values for registration.
-fn resource_default(stream: MioTcpStream) -> io::Result<Observer<MioTcpStream>> {
+// Creates a new Observer<MioTcpStream> with default values for registration.
+fn observer_stream(stream: MioTcpStream) -> io::Result<Observer<MioTcpStream>> {
     Observer::new(stream, rw(), PollOpt::edge())
 }
 
+// Creates a new Observer<MioTcpListener> with default values for registration.
+fn observer_listener(listener: MioTcpListener) -> io::Result<Observer<MioTcpListener>> {
+    Observer::new(listener, rw(), PollOpt::edge())
+}
+
+// =============== TcpStream =============== //
+
 pub struct TcpStream {
-    io: Observer<MioTcpStream>,
+    observer: Observer<MioTcpStream>,
 }
 
 impl TcpStream {
@@ -59,28 +72,28 @@ impl TcpStream {
 
         // The stream will be writable when it's connected. We're assuming
         // the reactor is being polled here.
-        let io = resource_default(stream)?;
+        let io = observer_stream(stream)?;
 
         io.await_writable().await;
 
         match io.get_ref().take_error()? {
             Some(err) => Err(err),
-            None => Ok(Self { io }),
+            None => Ok(Self { observer: io }),
         }
     }
 
     pub fn from_std(stream: StdTcpStream) -> io::Result<Self> {
         let stream = MioTcpStream::from_stream(stream)?;
-        let io = resource_default(stream)?;
-        Ok(Self { io })
+        let io = observer_stream(stream)?;
+        Ok(Self { observer: io })
     }
 
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.io.get_ref().peer_addr()
+        self.observer.get_ref().peer_addr()
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.get_ref().local_addr()
+        self.observer.get_ref().local_addr()
     }
 
     // Private because concurrently reading from or writing to
@@ -88,82 +101,82 @@ impl TcpStream {
     // should therefore be at most one reader _and_ one writer. One
     // should prefer to use the split() method.
     fn try_clone(&self) -> io::Result<TcpStream> {
-        let stream = self.io.get_ref().try_clone()?;
+        let stream = self.observer.get_ref().try_clone()?;
         Ok(Self {
-            io: Observer::from_other(stream, &self.io),
+            observer: Observer::from_other(stream, &self.observer),
         })
     }
 
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
-        self.io.get_ref().shutdown(how)
+        self.observer.get_ref().shutdown(how)
     }
 
     pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
-        self.io.get_ref().set_nodelay(nodelay)
+        self.observer.get_ref().set_nodelay(nodelay)
     }
 
     pub fn nodelay(&self) -> io::Result<bool> {
-        self.io.get_ref().nodelay()
+        self.observer.get_ref().nodelay()
     }
 
     pub fn set_recv_buffer_size(&self, size: usize) -> io::Result<()> {
-        self.io.get_ref().set_recv_buffer_size(size)
+        self.observer.get_ref().set_recv_buffer_size(size)
     }
 
     pub fn recv_buffer_size(&self) -> io::Result<usize> {
-        self.io.get_ref().recv_buffer_size()
+        self.observer.get_ref().recv_buffer_size()
     }
 
     pub fn set_send_buffer_size(&self, size: usize) -> io::Result<()> {
-        self.io.get_ref().set_send_buffer_size(size)
+        self.observer.get_ref().set_send_buffer_size(size)
     }
 
     pub fn send_buffer_size(&self) -> io::Result<usize> {
-        self.io.get_ref().send_buffer_size()
+        self.observer.get_ref().send_buffer_size()
     }
 
     pub fn set_keepalive(&self, keepalive: Option<Duration>) -> io::Result<()> {
-        self.io.get_ref().set_keepalive(keepalive)
+        self.observer.get_ref().set_keepalive(keepalive)
     }
 
     pub fn keepalive(&self) -> io::Result<Option<Duration>> {
-        self.io.get_ref().keepalive()
+        self.observer.get_ref().keepalive()
     }
 
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
-        self.io.get_ref().set_ttl(ttl)
+        self.observer.get_ref().set_ttl(ttl)
     }
 
     pub fn ttl(&self) -> io::Result<u32> {
-        self.io.get_ref().ttl()
+        self.observer.get_ref().ttl()
     }
 
     pub fn set_only_v6(&self, only_v6: bool) -> io::Result<()> {
-        self.io.get_ref().set_only_v6(only_v6)
+        self.observer.get_ref().set_only_v6(only_v6)
     }
 
     pub fn only_v6(&self) -> io::Result<bool> {
-        self.io.get_ref().only_v6()
+        self.observer.get_ref().only_v6()
     }
 
     pub fn set_linger(&self, dur: Option<Duration>) -> io::Result<()> {
-        self.io.get_ref().set_linger(dur)
+        self.observer.get_ref().set_linger(dur)
     }
 
     pub fn linger(&self) -> io::Result<Option<Duration>> {
-        self.io.get_ref().linger()
+        self.observer.get_ref().linger()
     }
 
     pub async fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
         use io::ErrorKind::WouldBlock;
 
         loop {
-            match self.io.get_ref().peek(buf) {
+            match self.observer.get_ref().peek(buf) {
                 Ok(n) => return Ok(n),
                 Err(e) if !is_retry(&e) => return Err(e),
                 Err(e) if e.kind() == WouldBlock => {
-                    self.io.reregister(rw(), PollOpt::edge())?;
-                    self.io.await_readable().await;
+                    self.observer.reregister(rw(), PollOpt::edge())?;
+                    self.observer.await_readable().await;
                 }
                 _ => (), // interrupted.
             }
@@ -179,10 +192,10 @@ impl AsyncRead for TcpStream {
     ) -> Poll<io::Result<usize>> {
         poll_rw!(
             self,
-            self.as_mut().io.read(buf),
+            self.as_mut().observer.read(buf),
             Ok(n),
             Ok(n),
-            self.as_ref().io.poll_readable(cx)
+            self.as_ref().observer.poll_readable(cx)
         )
     }
 }
@@ -195,20 +208,20 @@ impl AsyncWrite for TcpStream {
     ) -> Poll<io::Result<usize>> {
         poll_rw!(
             self,
-            self.as_mut().io.write(buf),
+            self.as_mut().observer.write(buf),
             Ok(n),
             Ok(n),
-            self.as_ref().io.poll_writable(cx)
+            self.as_ref().observer.poll_writable(cx)
         )
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         poll_rw!(
             self,
-            self.as_mut().io.flush(),
+            self.as_mut().observer.flush(),
             Ok(_),
             Ok(()),
-            self.as_ref().io.poll_writable(cx)
+            self.as_ref().observer.poll_writable(cx)
         )
     }
 
