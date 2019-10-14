@@ -4,15 +4,12 @@ use futures::{
     task::{Context, Poll},
 };
 use mio::{
-    net::{
-        TcpStream as MioTcpStream,
-        TcpListener as MioTcpListener,
-    },
-    PollOpt, Ready
+    net::{TcpListener as MioTcpListener, TcpStream as MioTcpStream},
+    PollOpt, Ready,
 };
 use std::{
     io::{self, Read, Write},
-    net::{Shutdown, SocketAddr, TcpStream as StdTcpStream, TcpListener as StdTcpListener},
+    net::{Shutdown, SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream},
     pin::Pin,
     time::Duration,
 };
@@ -27,7 +24,11 @@ macro_rules! poll_rw {
                     return ::std::task::Poll::Ready(Err(e))
                 }
                 ::std::result::Result::Err(e) if e.kind() == ::std::io::ErrorKind::WouldBlock => {
-                    if let Err(e) = $receiver.as_ref().observer.reregister(rw(), mio::PollOpt::edge()) {
+                    if let Err(e) = $receiver
+                        .as_ref()
+                        .observer
+                        .reregister(rw(), mio::PollOpt::edge())
+                    {
                         return ::std::task::Poll::Ready(::std::result::Result::Err(e));
                     } else if $poll == ::std::task::Poll::Pending {
                         return ::std::task::Poll::Pending;
@@ -70,9 +71,6 @@ pub struct TcpStream {
 impl TcpStream {
     pub async fn connect(addr: &SocketAddr) -> io::Result<Self> {
         let stream = MioTcpStream::connect(&addr)?;
-
-        // The stream will be writable when it's connected. We're assuming
-        // the reactor is being polled here.
         let io = observer_stream(stream)?;
 
         io.await_writable().await;
