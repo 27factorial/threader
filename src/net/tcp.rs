@@ -27,7 +27,7 @@ macro_rules! poll_rw {
                     return ::std::task::Poll::Ready(Err(e))
                 }
                 ::std::result::Result::Err(e) if e.kind() == ::std::io::ErrorKind::WouldBlock => {
-                    if let Err(e) = $receiver.as_ref().io.reregister(rw(), mio::PollOpt::edge()) {
+                    if let Err(e) = $receiver.as_ref().observer.reregister(rw(), mio::PollOpt::edge()) {
                         return ::std::task::Poll::Ready(::std::result::Result::Err(e));
                     } else if $poll == ::std::task::Poll::Pending {
                         return ::std::task::Poll::Pending;
