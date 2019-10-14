@@ -238,16 +238,16 @@ mod tests {
     use crate::executor::Executor;
     use crossbeam::channel;
     use once_cell::sync::Lazy;
-    use futures::future;
+
+    static EX: Lazy<Executor> = Lazy::new(|| Executor::new(None));
 
     #[test]
     fn connect_test() {
         let (tx, rx) = channel::unbounded();
-        let executor = Executor::new(None);
 
-        executor.spawn(async move {
+        EX.spawn(async move {
             let addr = "172.217.3.174:80".parse().unwrap();
-            let stream = TcpStream::connect(&addr).await.unwrap();
+            let stream = TcpStream::connect(&addr).await;
             dbg!(stream);
             tx.send(0).unwrap();
         });
