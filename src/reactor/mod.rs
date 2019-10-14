@@ -75,7 +75,7 @@ impl Reactor {
         let token = match self.shared.tokens.pop() {
             Ok(token) => token,
             Err(_) => {
-                let id = self.shared.current_token.fetch_add(1, Ordering::SeqCst);
+                let id = self.shared.current_token.fetch_add(1, Ordering::Relaxed);
 
                 if id == usize::MAX {
                     panic!(
@@ -188,7 +188,7 @@ impl Handle {
                 let token = match inner.tokens.pop() {
                     Ok(token) => token,
                     Err(_) => {
-                        let id = inner.current_token.fetch_add(1, Ordering::SeqCst);
+                        let id = inner.current_token.fetch_add(1, Ordering::AcqRel);
 
                         if id == usize::MAX {
                             panic!(
@@ -269,7 +269,7 @@ impl IoWaker {
     /// Checks the ready value, waking the read_waker and write_waker
     /// as necessary.
     fn wake_if_ready(&self, ready: Ready) {
-        self.readiness.fetch_or(ready.as_usize(), Ordering::SeqCst);
+        self.readiness.fetch_or(ready.as_usize(), Ordering::AcqRel);
 
         if ready.is_readable() {
             self.read_waker.wake();
@@ -293,12 +293,12 @@ impl IoWaker {
     /// Clears the read readiness of this IoWaker.
     fn clear_read(&self) {
         self.readiness
-            .fetch_and(!Ready::readable().as_usize(), Ordering::SeqCst);
+            .fetch_and(!Ready::readable().as_usize(), Ordering::AcqRel);
     }
 
     /// Clears the write readiness of this IoWaker.
     fn clear_write(&self) {
         self.readiness
-            .fetch_and(!Ready::writable().as_usize(), Ordering::SeqCst);
+            .fetch_and(!Ready::writable().as_usize(), Ordering::AcqRel);
     }
 }
