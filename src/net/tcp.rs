@@ -62,6 +62,7 @@ fn observer_listener(listener: MioTcpListener) -> io::Result<Observer<MioTcpList
 
 // =============== TcpStream =============== //
 
+#[derive(Debug)]
 pub struct TcpStream {
     observer: Observer<MioTcpStream>,
 }
@@ -237,16 +238,20 @@ mod tests {
     use crate::executor::Executor;
     use crossbeam::channel;
     use once_cell::sync::Lazy;
-
-    const EX: Lazy<Executor> = Lazy::new(|| Executor::new(None));
+    use futures::future;
 
     #[test]
     fn connect_test() {
-        let (tx, rx) = channel::unbounded::<()>();
+        let (tx, rx) = channel::unbounded();
+        let executor = Executor::new(None);
 
-        EX.spawn(async {
+        executor.spawn(async move {
             let addr = "172.217.3.174:80".parse().unwrap();
-            let stream = TcpStream::connect(&addr).await;
-        })
+            let stream = TcpStream::connect(&addr).await.unwrap();
+            dbg!(stream);
+            tx.send(0).unwrap();
+        });
+
+        assert_eq!(rx.recv(), Ok(0));
     }
 }
