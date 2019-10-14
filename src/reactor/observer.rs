@@ -10,6 +10,7 @@ use std::{
 /// A type that "observes" changes in a resource's state
 /// from the reactor, waking from the `IoWaker` if a change
 /// is detected.
+#[derive(Debug)]
 pub struct Observer<R: Evented> {
     resource: R,
     io_waker: Arc<IoWaker>,
