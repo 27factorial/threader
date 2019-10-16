@@ -244,9 +244,9 @@ mod tests {
         let (tx, rx) = channel::unbounded();
 
         EX.spawn(async move {
-            let addr = "172.217.3.174:80".parse().unwrap();
+            let addr = "10.0.0.1:80".parse().unwrap();
             let stream = TcpStream::connect(&addr).await;
-            dbg!(stream);
+            let _ = dbg!(stream);
             tx.send(0).unwrap();
         });
 
