@@ -1,33 +1,40 @@
 mod task;
 
-use {
-    crossbeam::{deque::*, utils::Backoff},
-    futures::{
-        task::{waker_ref, Context, Poll},
-        Future,
-    },
-    num_cpus,
-    once_cell::sync::Lazy,
-    std::{
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
-        thread::{self, JoinHandle},
-    },
-    task::Task,
+use crossbeam::{deque::*, sync::WaitGroup, utils::Backoff};
+use futures::{
+    task::{waker_ref, Context, Poll},
+    Future,
 };
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::{self, JoinHandle},
+    time::Duration,
+};
+use task::Task;
 
 /// The injector used as the point of entry for new tasks. This will
 /// be lazily initialized on its first access. Note that all executors
 /// of the same type will share an injector queue.
-static INJECTOR: Lazy<Injector<Arc<Task>>> = Lazy::new(|| Injector::new());
+static INJECTOR: Lazy<Injector<Arc<Task>>> = Lazy::new(Injector::new);
 
 fn create_thread(
     handle: Arc<ExecutorHandle>,
     worker: Worker<Arc<Task>>,
     injector: &'static Injector<Arc<Task>>,
 ) -> JoinHandle<()> {
+    // When the backoff is completed, we should wait for
+    // this long between each iteration of checking the
+    // shutdown status. This prevents using 100% CPU time
+    // but also allows for higher performance by not
+    // sending messages to this thread every time a new
+    // task is available.
+    const MAX_SLEEP: Duration = Duration::from_nanos(1000);
+
     // helper for this function, not used anywhere else.
     fn steal(stealers: &Vec<Stealer<Arc<Task>>>, worker: &Worker<Arc<Task>>) {
         for stealer in stealers {
@@ -94,8 +101,9 @@ fn create_thread(
                     } else if !injector.is_empty() {
                         // a new task is available.
                         break;
+                    } else if backoff.is_completed() {
+                        thread::sleep(MAX_SLEEP);
                     } else {
-                        // nothing new has happened, so wait.
                         backoff.snooze();
                     }
                 }

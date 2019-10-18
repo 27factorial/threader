@@ -1,16 +1,14 @@
-use {
-    crossbeam::{deque::Injector, utils::Backoff},
-    futures::{future::Future, task::ArcWake},
-    std::{
-        cell::UnsafeCell,
-        fmt,
-        ops::{Deref, DerefMut, Drop},
-        pin::Pin,
-        ptr::NonNull,
-        sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        },
+use crossbeam::{deque::Injector, utils::Backoff};
+use futures::{future::Future, task::ArcWake};
+use std::{
+    cell::UnsafeCell,
+    fmt,
+    ops::{Deref, DerefMut, Drop},
+    pin::Pin,
+    ptr::NonNull,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
     },
 };
 
