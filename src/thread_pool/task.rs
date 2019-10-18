@@ -15,7 +15,7 @@ use std::{
 /// A type representing a future with no output and a 'static lifetime.
 type ExecutorFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
-/// A task that can be run on an executor.
+/// A task that can be run on an thread_pool.
 #[derive(Debug)]
 pub(super) struct Task {
     inner: Inner,
@@ -52,7 +52,7 @@ impl Task {
     }
 
     /// Sets this `Task`'s `complete` flag to true, making sure that it can not be rescheduled onto
-    /// an executor again. This is called when the executor receives `Poll::Ready(())` from the
+    /// an thread_pool again. This is called when the thread_pool receives `Poll::Ready(())` from the
     /// inner future.
     pub(super) fn complete(&self) {
         // sanity check, this could be replaced with a simple store operation.

@@ -233,7 +233,7 @@ impl AsyncWrite for TcpStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::Executor;
+    use crate::thread_pool::Executor;
     use crossbeam::channel;
     use once_cell::sync::Lazy;
 

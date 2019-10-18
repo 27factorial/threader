@@ -112,7 +112,7 @@ fn create_thread(
     })
 }
 
-/// The executor. This is the part of the thread pool that actually
+/// The thread_pool. This is the part of the thread pool that actually
 /// executes futures. It holds many threads which will call `Future::poll()`
 /// on the spawned futures. The injector is a global queue that is accessible
 /// to all tasks and threads, and is used for spawning new tasks.
@@ -127,7 +127,7 @@ impl Executor {
     /// Creates a new instance of an Executor.
     pub fn new(count: Option<usize>) -> Self {
         if let Some(0) = count {
-            panic!("An executor can not be created with 0 threads.");
+            panic!("An thread_pool can not be created with 0 threads.");
         }
 
         // default to this PC's number of cores.
@@ -164,7 +164,7 @@ impl Executor {
         }
     }
 
-    /// Spawns a future on this executor.
+    /// Spawns a future on this thread_pool.
     pub fn spawn<F>(&self, future: F)
     where
         F: Future<Output = ()> + Send + 'static,
@@ -190,7 +190,7 @@ impl Drop for Executor {
     }
 }
 
-/// A handle to the current executor. Used for threads to access other
+/// A handle to the current thread_pool. Used for threads to access other
 /// threads' stealers, and for signalling shutdown.
 #[derive(Debug)]
 pub(crate) struct ExecutorHandle {
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn bad_future() {
         // A future that spawns a thread, returns Poll::Ready(()), and
-        // keeps trying to reschedule itself on the executor.
+        // keeps trying to reschedule itself on the thread_pool.
         struct BadFuture {
             shared: Arc<Mutex<Option<Waker>>>,
         }
