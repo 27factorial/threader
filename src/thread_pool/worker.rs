@@ -1,0 +1,135 @@
+#![allow(unused)]
+
+use super::{task::Task, Shared};
+use crate::utils::{
+    debug_unreachable::debug_unreachable,
+    thread_parker::{self, ThreadParker, ThreadUnparker},
+};
+use crossbeam::{
+    deque::{Injector, Steal, Stealer, Worker as WorkerQueue},
+    queue::ArrayQueue,
+};
+use futures::task::{waker_ref, Context, Poll};
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    thread::{self, JoinHandle},
+};
+
+// The worker is idle and ready to be woken up.
+pub(super) const IDLE: usize = 0;
+
+// The worker is currently running a task.
+pub(super) const RUNNING: usize = 1;
+
+// The worker has a new task waiting on the injector.
+pub(super) const NEW_TASK: usize = 2;
+
+// The worker should be shut down whenever it is next idle.
+pub(super) const SHUTDOWN_IDLE: usize = 3;
+
+// The worker should be shut down immediately.
+// This is similar to SHUTDOWN_IDLE, except that
+// it will be checked each time the thread tries
+// to poll a task, so the effect is immediate.
+pub(super) const SHUTDOWN_NOW: usize = 4;
+
+pub(super) fn create_worker(
+    shared: Arc<Shared>,
+    task_queue: WorkerQueue<Arc<Task>>,
+) -> io::Result<(JoinHandle<()>, Arc<Handle>)> {
+    let (parker, unparker) = thread_parker::new2();
+    let state = AtomicUsize::new(RUNNING);
+    let handle = Arc::new(Handle { unparker, state });
+    let thread_handle = Arc::clone(&handle);
+
+    let join_handle = thread::Builder::new().spawn(move || loop {
+        if thread_handle
+            .state
+            .compare_and_swap(RUNNING, IDLE, Ordering::AcqRel)
+            == RUNNING
+        {
+            parker.park();
+        }
+
+        match thread_handle.state.load(Ordering::Acquire) {
+            NEW_TASK => {
+                thread_handle
+                    .state
+                    .compare_and_swap(NEW_TASK, RUNNING, Ordering::AcqRel);
+                run_tasks(&task_queue, &shared, &thread_handle.state);
+                // The sleep queue is exactly large enough to store each thread handle once,
+                // so if this fails, it means we were already on the sleep queue.
+                shared.sleep_queue.push(Arc::clone(&thread_handle));
+            }
+            SHUTDOWN_IDLE | SHUTDOWN_NOW => return,
+            _ => debug_unreachable(),
+        }
+    })?;
+
+    Ok((join_handle, handle))
+}
+
+fn run_tasks(task_queue: &WorkerQueue<Arc<Task>>, shared: &Shared, state: &AtomicUsize) {
+    while let Some(task) = get_task(&task_queue, shared) {
+        if state.load(Ordering::Acquire) == SHUTDOWN_NOW {
+            return;
+        } else if !task.is_complete() {
+            let waker = waker_ref(&task);
+            let mut cx = Context::from_waker(&*waker);
+
+            if let Poll::Ready(()) = task.future().as_mut().poll(&mut cx) {
+                // prevents the task from being rescheduled, in case of
+                // bad future implementations.
+                task.complete();
+            }
+        }
+    }
+}
+
+fn get_task(task_queue: &WorkerQueue<Arc<Task>>, shared: &Shared) -> Option<Arc<Task>> {
+    task_queue.pop().or_else(|| {
+        // Then we check the global injector queue if it's not empty.
+        if !shared.injector.is_empty() {
+            let mut result = shared.injector.steal_batch(&task_queue);
+            loop {
+                if result.is_retry() {
+                    result = shared.injector.steal_batch(&task_queue);
+                } else {
+                    break;
+                }
+            }
+
+            // The injector may have been emptied between when we checked it and tried to steal
+            // from it. This accounts for that possibilty.
+            if result.is_empty() {
+                steal(&task_queue, &shared.stealers);
+            }
+        } else {
+            // If it was empty, then we check the stealers instead.
+            steal(&task_queue, &shared.stealers);
+        }
+
+        task_queue.pop()
+    })
+}
+
+fn steal(worker: &WorkerQueue<Arc<Task>>, stealers: &[Stealer<Arc<Task>>]) {
+    for stealer in stealers {
+        loop {
+            match stealer.steal_batch(worker) {
+                Steal::Success(_) => return,
+                Steal::Empty => break,
+                Steal::Retry => (),
+            }
+        }
+    }
+}
+
+pub(super) struct Handle {
+    pub(super) unparker: ThreadUnparker,
+    pub(super) state: AtomicUsize,
+}

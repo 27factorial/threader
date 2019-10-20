@@ -4,6 +4,12 @@ use std::sync::{
     Arc,
 };
 
+pub fn new2() -> (ThreadParker, ThreadUnparker) {
+    let parker = ThreadParker::new();
+    let unparker = parker.unparker();
+    (parker, unparker)
+}
+
 pub struct ThreadParker {
     inner: Arc<Inner>,
 }
@@ -43,13 +49,13 @@ pub struct ThreadUnparker {
 impl ThreadUnparker {
     pub fn unpark(&self) -> bool {
         // Returns true if this thread is already notified, so we have to invert it.
-        let first = !self
+        let notified = !self
             .inner
             .notified
             .compare_and_swap(false, true, Ordering::AcqRel);
-        let second = self.inner.cvar.notify_one();
+        let unparked = self.inner.cvar.notify_one();
 
-        first || second
+        notified || unparked
     }
 }
 

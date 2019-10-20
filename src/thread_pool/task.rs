@@ -1,3 +1,4 @@
+use super::Shared;
 use crossbeam::{deque::Injector, utils::Backoff};
 use futures::{future::Future, task::ArcWake};
 use std::{
@@ -8,14 +9,14 @@ use std::{
     ptr::NonNull,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Weak,
     },
 };
 
 /// A type representing a future with no output and a 'static lifetime.
 type ExecutorFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
-/// A task that can be run on an thread_pool.
+/// A task that can be run on an executor.
 #[derive(Debug)]
 pub(super) struct Task {
     inner: Inner,
@@ -23,21 +24,21 @@ pub(super) struct Task {
 
 impl Task {
     /// Creates a new `Task` containing the provided future.
-    pub(super) fn new<F>(future: F, injector: &'static Injector<Arc<Task>>) -> Self
+    pub(super) fn new<F>(future: F, shared: Weak<Shared>) -> Self
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let inner = Inner::new(Box::pin(future), injector);
+        let inner = Inner::new(Box::pin(future), shared);
 
         Self { inner }
     }
 
     /// Creates a new `Task` containing the provided future and wraps it in an Arc.
-    pub(super) fn arc<F>(future: F, injector: &'static Injector<Arc<Self>>) -> Arc<Self>
+    pub(super) fn arc<F>(future: F, shared: Weak<Shared>) -> Arc<Self>
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        Arc::new(Self::new(future, injector))
+        Arc::new(Self::new(future, shared))
     }
 
     /// Returns the future that is contained in the `inner` field of this
@@ -52,23 +53,26 @@ impl Task {
     }
 
     /// Sets this `Task`'s `complete` flag to true, making sure that it can not be rescheduled onto
-    /// an thread_pool again. This is called when the thread_pool receives `Poll::Ready(())` from the
+    /// an executor again. This is called when the executor receives `Poll::Ready(())` from the
     /// inner future.
     pub(super) fn complete(&self) {
         // sanity check, this could be replaced with a simple store operation.
         if self.inner.complete.swap(true, Ordering::AcqRel) {
             panic!(
-                "threader::task::Task::finish(): Task was rescheduled after finish() was called!"
+                "threader::task::Task::complete(): Task was rescheduled after complete() was called!"
             );
         }
     }
 }
 
+// TODO: replace this with a more suitable implementation.
 impl ArcWake for Task {
     fn wake_by_ref(arc_self: &Arc<Self>) {
         if !arc_self.is_complete() {
-            let cloned = Arc::clone(arc_self);
-            arc_self.inner.injector.push(cloned);
+            if let Some(shared) = arc_self.inner.shared.upgrade() {
+                let cloned = Arc::clone(arc_self);
+                shared.injector.push(cloned);
+            }
         }
     }
 }
@@ -80,18 +84,18 @@ struct Inner {
     complete: AtomicBool,
     flag: AtomicBool,
     future: UnsafeCell<ExecutorFuture>,
-    injector: &'static Injector<Arc<Task>>,
+    shared: Weak<Shared>,
 }
 
 impl Inner {
     /// Creates a new `Inner` instance with the provided future.
     /// the `flag` field is `false` until `Inner::future()` is called.
-    fn new(future: ExecutorFuture, injector: &'static Injector<Arc<Task>>) -> Self {
+    fn new(future: ExecutorFuture, shared: Weak<Shared>) -> Self {
         Self {
             complete: AtomicBool::new(false),
             flag: AtomicBool::new(false),
             future: UnsafeCell::new(future),
-            injector,
+            shared,
         }
     }
 
