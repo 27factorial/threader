@@ -66,6 +66,7 @@ pub(super) fn create_worker(
                 shared.sleep_queue.push(Arc::clone(&thread_handle));
             }
             SHUTDOWN_IDLE | SHUTDOWN_NOW => return,
+            IDLE => (),
             _ => debug_unreachable(),
         }
     })?;
