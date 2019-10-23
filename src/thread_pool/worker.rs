@@ -34,7 +34,7 @@ pub(super) const SHUTDOWN_IDLE: usize = 3;
 // The worker should be shut down immediately.
 // This is similar to SHUTDOWN_IDLE, except that
 // it will be checked each time the thread tries
-// to poll a task, so the effect is immediate.
+// to poll a task, so the effect is more immediate.
 pub(super) const SHUTDOWN_NOW: usize = 4;
 
 pub(super) fn create_worker(
