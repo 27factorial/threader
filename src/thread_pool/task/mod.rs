@@ -1,8 +1,13 @@
 mod waker;
 
 use super::Shared;
+use crate::utils::wrapper::Wrapper;
 use crossbeam::{deque::Injector, utils::Backoff};
-use futures::{future::Future, task::Waker};
+use futures::{
+    self,
+    future::Future,
+    task::{ArcWake, Waker},
+};
 use std::{
     cell::UnsafeCell,
     fmt,
@@ -19,9 +24,7 @@ use std::{
 
 pub(crate) type ExecutorFuture = dyn Future<Output = ()> + Send + 'static;
 
-pub fn waker(task: &Task) -> Waker {
-    waker::waker(task)
-}
+pub fn waker(task: &Task) -> Waker {}
 
 /// A task that can be run on an executor.
 #[derive(Debug)]
@@ -103,10 +106,8 @@ impl Inner<ExecutorFuture> {
     /// Returns a unique guard to the contained future, spinning in
     /// an exponential backoff loop if the future is currently in use.
     fn future(&self) -> Pin<FutureRef<'_>> {
-        use Ordering::{AcqRel, Acquire};
-
         let backoff = Backoff::new();
-        while let Err(_) = self.flag.compare_exchange(false, true, AcqRel, Acquire) {
+        while self.flag.compare_and_swap(false, true, Ordering::AcqRel) {
             backoff.snooze();
         }
 
@@ -122,6 +123,19 @@ impl Inner<ExecutorFuture> {
                 future,
             })
         }
+    }
+}
+
+impl ArcWake for Inner<ExecutorFuture> {
+    fn wake(self: Arc<Self>) {
+        if let Some(shared) = self.shared.upgrade() {
+            let task = Task::from_inner(self);
+            shared.injector.push(task);
+        }
+    }
+
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        ArcWake::wake(Arc::clone(arc_self));
     }
 }
 
