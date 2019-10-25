@@ -115,7 +115,7 @@ where
 {
     fn spawn(&self, future: F) {
         let shared = Arc::downgrade(&self.shared);
-        let task = Task::arc(future, shared);
+        let task = Task::new(future, shared);
         self.shared.injector.push(task);
 
         if let Ok(handle) = self.shared.sleep_queue.pop() {
@@ -132,9 +132,9 @@ impl Drop for ThreadPool {
 }
 
 pub(crate) struct Shared {
-    injector: Injector<Arc<Task>>,
+    injector: Injector<Task>,
     sleep_queue: ArrayQueue<Arc<worker::Handle>>,
-    stealers: Vec<Stealer<Arc<Task>>>,
+    stealers: Vec<Stealer<Task>>,
 }
 
 #[cfg(test)]
@@ -259,33 +259,33 @@ mod tests {
         eprintln!("threader average: {:?} ms", average);
     }
 
-//    #[test]
-//    #[ignore]
-//    fn time_tokio() {
-//        let executor = tokio::runtime::Runtime::new().unwrap();
-//        let mut results = Vec::with_capacity(TIMES);
-//        eprintln!("tokio time test starting...");
-//        let total_start = Instant::now();
-//        for _ in 0..TIMES {
-//            let start = Instant::now();
-//
-//            for _ in 0..50_000 {
-//                executor.spawn(async {
-//                    future::ready(()).await;
-//                });
-//            }
-//
-//            let end = start.elapsed();
-//            results.push(end.as_millis());
-//        }
-//        let shutdown_start = Instant::now();
-//        executor.shutdown_on_idle();
-//        eprintln!("tokio shutdown: {:?}", shutdown_start.elapsed());
-//        eprintln!("tokio total: {:?}", total_start.elapsed());
-//        let average = {
-//            let sum: u128 = results.into_iter().sum();
-//            (sum as f64) / (TIMES as f64)
-//        };
-//        eprintln!("tokio average: {:?} ms", average);
-//    }
+    //    #[test]
+    //    #[ignore]
+    //    fn time_tokio() {
+    //        let executor = tokio::runtime::Runtime::new().unwrap();
+    //        let mut results = Vec::with_capacity(TIMES);
+    //        eprintln!("tokio time test starting...");
+    //        let total_start = Instant::now();
+    //        for _ in 0..TIMES {
+    //            let start = Instant::now();
+    //
+    //            for _ in 0..50_000 {
+    //                executor.spawn(async {
+    //                    future::ready(()).await;
+    //                });
+    //            }
+    //
+    //            let end = start.elapsed();
+    //            results.push(end.as_millis());
+    //        }
+    //        let shutdown_start = Instant::now();
+    //        executor.shutdown_on_idle();
+    //        eprintln!("tokio shutdown: {:?}", shutdown_start.elapsed());
+    //        eprintln!("tokio total: {:?}", total_start.elapsed());
+    //        let average = {
+    //            let sum: u128 = results.into_iter().sum();
+    //            (sum as f64) / (TIMES as f64)
+    //        };
+    //        eprintln!("tokio average: {:?} ms", average);
+    //    }
 }

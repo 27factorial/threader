@@ -1,25 +1,32 @@
+mod waker;
+
 use super::Shared;
 use crossbeam::{deque::Injector, utils::Backoff};
-use futures::{future::Future, task::ArcWake};
+use futures::{future::Future, task::Waker};
 use std::{
     cell::UnsafeCell,
     fmt,
+    marker::PhantomData,
+    mem,
     ops::{Deref, DerefMut, Drop},
     pin::Pin,
-    ptr::NonNull,
+    ptr::{self, NonNull},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{self, AtomicBool, AtomicUsize, Ordering},
         Arc, Weak,
     },
 };
 
-/// A type representing a future with no output and a 'static lifetime.
-type ExecutorFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+pub(crate) type ExecutorFuture = dyn Future<Output = ()> + Send + 'static;
+
+pub fn waker(task: &Task) -> Waker {
+    waker::waker(task)
+}
 
 /// A task that can be run on an executor.
 #[derive(Debug)]
-pub(super) struct Task {
-    inner: Inner,
+pub struct Task {
+    inner: Arc<Inner<ExecutorFuture>>,
 }
 
 impl Task {
@@ -28,22 +35,14 @@ impl Task {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let inner = Inner::new(Box::pin(future), shared);
+        let mut inner = Inner::new(future, shared);
 
         Self { inner }
     }
 
-    /// Creates a new `Task` containing the provided future and wraps it in an Arc.
-    pub(super) fn arc<F>(future: F, shared: Weak<Shared>) -> Arc<Self>
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        Arc::new(Self::new(future, shared))
-    }
-
     /// Returns the future that is contained in the `inner` field of this
     /// `Task`, spinning if the future is currently being used.
-    pub(super) fn future(&self) -> FutureRef<'_> {
+    pub(super) fn future(&self) -> Pin<FutureRef<'_>> {
         self.inner.future()
     }
 
@@ -63,45 +62,47 @@ impl Task {
             );
         }
     }
-}
 
-// TODO: replace this with a more suitable implementation.
-impl ArcWake for Task {
-    fn wake_by_ref(arc_self: &Arc<Self>) {
-        if !arc_self.is_complete() {
-            if let Some(shared) = arc_self.inner.shared.upgrade() {
-                let cloned = Arc::clone(arc_self);
-                shared.injector.push(cloned);
-            }
-        }
+    fn from_inner(inner: Arc<Inner<ExecutorFuture>>) -> Self {
+        Self { inner }
     }
 }
 
 /// A wrapper for the future contained inside of a `Task`.
 /// It is essentially a wrapper around `UnsafeCell<ExecutorFuture>`
-/// that ensures unique access to the underlying future.
-struct Inner {
+/// that ensures unique access to the underlying future. This can only
+/// be constructed with an `ExecutorFuture`, but needs to be generic
+/// to construct internally.
+struct Inner<F: ?Sized> {
+    shared: Weak<Shared>,
     complete: AtomicBool,
     flag: AtomicBool,
-    future: UnsafeCell<ExecutorFuture>,
-    shared: Weak<Shared>,
+    future: UnsafeCell<F>,
 }
 
-impl Inner {
+impl<F> Inner<F>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     /// Creates a new `Inner` instance with the provided future.
     /// the `flag` field is `false` until `Inner::future()` is called.
-    fn new(future: ExecutorFuture, shared: Weak<Shared>) -> Self {
-        Self {
+    fn new(future: F, shared: Weak<Shared>) -> Arc<Inner<ExecutorFuture>>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        Arc::new(Self {
+            shared,
             complete: AtomicBool::new(false),
             flag: AtomicBool::new(false),
             future: UnsafeCell::new(future),
-            shared,
-        }
+        })
     }
+}
 
+impl Inner<ExecutorFuture> {
     /// Returns a unique guard to the contained future, spinning in
     /// an exponential backoff loop if the future is currently in use.
-    fn future(&self) -> FutureRef<'_> {
+    fn future(&self) -> Pin<FutureRef<'_>> {
         use Ordering::{AcqRel, Acquire};
 
         let backoff = Backoff::new();
@@ -112,18 +113,23 @@ impl Inner {
         let future = NonNull::new(self.future.get())
             .expect("threader::task::Inner::future(): future was null!");
 
-        FutureRef {
-            flag: &self.flag,
-            future,
+        unsafe {
+            // SAFETY: The future is stored behind a pointer
+            // to a heap object, so even moving this will not
+            // move the future, so it is pinned in memory.
+            Pin::new_unchecked(FutureRef {
+                flag: &self.flag,
+                future,
+            })
         }
     }
 }
 
-impl fmt::Debug for Inner {
+impl<F: ?Sized> fmt::Debug for Inner<F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Inner")
             .field("flag", &self.flag)
-            .field("future", &"UnsafeCell { data: ExecutorFuture { .. } }")
+            .field("future", &"UnsafeCell { .. }")
             .finish()
     }
 }
@@ -131,7 +137,7 @@ impl fmt::Debug for Inner {
 // SAFETY: This impl is safe because of the way that Inner works.
 // Since it does not allow multiple references to the underlying
 // future, there's no possibility of a data race.
-unsafe impl Sync for Inner {}
+unsafe impl<F: ?Sized> Sync for Inner<F> {}
 
 /// A unique guard to this future. Implements `Deref` and `DerefMut`
 /// with a `Target` of `ExecutorFuture`. Its drop implementation also releases
