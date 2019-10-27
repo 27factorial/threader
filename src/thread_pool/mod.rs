@@ -263,34 +263,4 @@ mod tests {
         };
         eprintln!("threader average: {:?} ms", average);
     }
-
-        #[test]
-        #[ignore]
-        fn time_tokio() {
-            let executor = tokio::runtime::Runtime::new().unwrap();
-            let mut results = Vec::with_capacity(TIMES);
-            eprintln!("tokio time test starting...");
-            let total_start = Instant::now();
-            for _ in 0..TIMES {
-                let start = Instant::now();
-
-                for _ in 0..50_000 {
-                    executor.spawn(async {
-                        future::ready(()).await;
-                    });
-                }
-
-                let end = start.elapsed();
-                results.push(end.as_millis());
-            }
-            let shutdown_start = Instant::now();
-            executor.shutdown_on_idle();
-            eprintln!("tokio shutdown: {:?}", shutdown_start.elapsed());
-            eprintln!("tokio total: {:?}", total_start.elapsed());
-            let average = {
-                let sum: u128 = results.into_iter().sum();
-                (sum as f64) / (TIMES as f64)
-            };
-            eprintln!("tokio average: {:?} ms", average);
-        }
 }
