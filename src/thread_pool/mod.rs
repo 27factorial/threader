@@ -168,15 +168,56 @@ mod tests {
 
     #[test]
     fn reschedule() {
+        struct CustomFuture {
+            waker: Arc<Mutex<Option<Waker>>>,
+            shared: Arc<AtomicBool>,
+        }
+
+        impl CustomFuture {
+            fn new() -> CustomFuture {
+                let waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
+                let waker_thread = Arc::clone(&waker);
+                let shared = Arc::new(AtomicBool::new(false));
+                let shared_thread = Arc::clone(&shared);
+
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_secs(1));
+
+                    if let Some(waker) = waker_thread.lock().take() {
+                        waker.wake();
+                        shared_thread.store(true, Ordering::SeqCst);
+                    }
+                });
+
+                CustomFuture {
+                    waker,
+                    shared,
+                }
+            }
+        }
+
+        impl Future for CustomFuture {
+            type Output = ();
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                if self.shared.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    *(self.waker.lock()) = Some(cx.waker().clone());
+                    Poll::Pending
+                }
+            }
+        }
+
         let (tx, rx) = channel::unbounded();
-        let executor = ThreadPool::new().unwrap();
+        let executor = ThreadPool::with_threads(1).unwrap();
 
         executor.spawn(async move {
-            future::ready(()).await;
+            CustomFuture::new().await;
             tx.send(0).unwrap();
         });
 
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(4));
         assert_eq!(rx.try_recv(), Ok(0));
     }
 

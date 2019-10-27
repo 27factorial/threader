@@ -17,12 +17,13 @@ pub fn waker(task: &Task) -> Waker {
     // cast back directly from *const (). Okay, then why not
     // use &ptr as *const *const Inner<ExecutorFuture>? The answer
     // is that ptr is stored on the stack, and is not guaranteed
-    // to stay valid, since other variable and such that get pushed
-    // onto the stack may overwrite it, so we would be pointing to a
-    // pointer which points to invalid memory. Therefore, we use the
-    // ptr that is in the Inner object itself, so that the second
-    // pointer has a stable location in memory, since Inner does
-    // not move until it is dropped. It's a hack, but it works.
+    // to stay valid, since other variables and such that get pushed
+    // onto the stack may overwrite it. If ptr did get overwritten,
+    // we would be pointing to a pointer which points to invalid
+    // memory. Therefore, we use the ptr that is in the Inner object
+    // itself, so that the second pointer has a location in memory which
+    // can not be overwritten until the Arc that the Inner instance comes
+    // from is dropped. It's a hack, but it works as far as I've tested.
     let waker_ptr = unsafe { (&(*ptr).self_ptr) as *const *const Inner<ExecutorFuture> };
 
     let raw = RawWaker::new(waker_ptr as *const (), VTABLE);

@@ -73,7 +73,7 @@ impl TcpStream {
         let stream = MioTcpStream::connect(&addr)?;
         let io = observer_stream(stream)?;
 
-        io.await_writable().await;
+        dbg!(io.await_writable().await);
 
         match io.get_ref().take_error()? {
             Some(err) => Err(err),
@@ -230,26 +230,27 @@ impl AsyncWrite for TcpStream {
     }
 }
 
-//#[cfg(test)]
-//mod tests {
-//    use super::*;
-//    use crate::thread_pool::Executor;
-//    use crossbeam::channel;
-//    use once_cell::sync::Lazy;
-//
-//    static EX: Lazy<Executor> = Lazy::new(|| Executor::new(None));
-//
-//    #[test]
-//    fn connect_test() {
-//        let (tx, rx) = channel::unbounded();
-//
-//        EX.spawn(async move {
-//            let addr = "10.0.0.1:80".parse().unwrap();
-//            let stream = TcpStream::connect(&addr).await;
-//            let _ = dbg!(stream);
-//            tx.send(0).unwrap();
-//        });
-//
-//        assert_eq!(rx.recv(), Ok(0));
-//    }
-//}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::Executor;
+    use crate::thread_pool::ThreadPool;
+    use crossbeam::channel;
+    use once_cell::sync::Lazy;
+
+    static EX: Lazy<ThreadPool> = Lazy::new(|| ThreadPool::new().unwrap());
+
+    #[test]
+    fn connect_test() {
+        let (tx, rx) = channel::unbounded();
+
+        EX.spawn(async move {
+            let addr = "173.245.52.164:80".parse().unwrap();
+            let stream = TcpStream::connect(&addr).await;
+            let _ = dbg!(stream);
+            tx.send(0).unwrap();
+        });
+
+        assert_eq!(rx.recv(), Ok(0));
+    }
+}
