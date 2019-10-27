@@ -24,7 +24,9 @@ use std::{
 
 pub(crate) type ExecutorFuture = dyn Future<Output = ()> + Send + 'static;
 
-pub fn waker(task: &Task) -> Waker {}
+pub fn waker(task: &Task) -> Waker {
+    waker::waker(task)
+}
 
 /// A task that can be run on an executor.
 #[derive(Debug)]
@@ -38,7 +40,7 @@ impl Task {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let mut inner = Inner::new(future, shared);
+        let inner = Inner::new(future, shared);
 
         Self { inner }
     }
@@ -77,6 +79,7 @@ impl Task {
 /// be constructed with an `ExecutorFuture`, but needs to be generic
 /// to construct internally.
 struct Inner<F: ?Sized> {
+    self_ptr: *const Inner<ExecutorFuture>,
     shared: Weak<Shared>,
     complete: AtomicBool,
     flag: AtomicBool,
@@ -89,16 +92,27 @@ where
 {
     /// Creates a new `Inner` instance with the provided future.
     /// the `flag` field is `false` until `Inner::future()` is called.
-    fn new(future: F, shared: Weak<Shared>) -> Arc<Inner<ExecutorFuture>>
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        Arc::new(Self {
+    fn new(future: F, shared: Weak<Shared>) -> Arc<Inner<ExecutorFuture>> {
+        // a null fat pointer. Only used as an intermediate step in constructing
+        // this Inner instance.
+        let null_fat =
+            unsafe { *(&[0usize; 2] as *const [usize; 2] as *const *const Inner<ExecutorFuture>) };
+
+        let arc = Arc::new(Self {
+            self_ptr: null_fat,
             shared,
             complete: AtomicBool::new(false),
             flag: AtomicBool::new(false),
             future: UnsafeCell::new(future),
-        })
+        }) as Arc<Inner<ExecutorFuture>>;
+
+        let arc_ptr = Arc::into_raw(arc) as *mut Inner<ExecutorFuture>;
+
+        unsafe {
+            let const_arc_ptr = arc_ptr as *const Inner<ExecutorFuture>;
+            (*arc_ptr).self_ptr = const_arc_ptr;
+            Arc::from_raw(const_arc_ptr)
+        }
     }
 }
 
@@ -126,19 +140,6 @@ impl Inner<ExecutorFuture> {
     }
 }
 
-impl ArcWake for Inner<ExecutorFuture> {
-    fn wake(self: Arc<Self>) {
-        if let Some(shared) = self.shared.upgrade() {
-            let task = Task::from_inner(self);
-            shared.injector.push(task);
-        }
-    }
-
-    fn wake_by_ref(arc_self: &Arc<Self>) {
-        ArcWake::wake(Arc::clone(arc_self));
-    }
-}
-
 impl<F: ?Sized> fmt::Debug for Inner<F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Inner")
@@ -151,6 +152,7 @@ impl<F: ?Sized> fmt::Debug for Inner<F> {
 // SAFETY: This impl is safe because of the way that Inner works.
 // Since it does not allow multiple references to the underlying
 // future, there's no possibility of a data race.
+unsafe impl<F: ?Sized> Send for Inner<F> {}
 unsafe impl<F: ?Sized> Sync for Inner<F> {}
 
 /// A unique guard to this future. Implements `Deref` and `DerefMut`
