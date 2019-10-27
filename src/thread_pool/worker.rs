@@ -11,6 +11,7 @@ use crate::utils::{
 use crossbeam::{
     deque::{Injector, Steal, Stealer, Worker as WorkerQueue},
     queue::ArrayQueue,
+    utils::Backoff,
 };
 use futures::task::{waker_ref, Context, Poll};
 use std::{
@@ -78,17 +79,30 @@ pub(super) fn create_worker(
 }
 
 fn run_tasks(task_queue: &WorkerQueue<Task>, shared: &Shared, state: &AtomicUsize) {
-    while let Some(task) = get_task(task_queue, shared) {
-        if state.load(Ordering::Acquire) == SHUTDOWN_NOW {
-            return;
-        } else if !task.is_complete() {
-            let waker = task::waker(&task);
-            let mut cx = Context::from_waker(&waker);
+    loop {
+        while let Some(task) = get_task(task_queue, shared) {
+            if state.load(Ordering::Acquire) == SHUTDOWN_NOW {
+                return;
+            } else if !task.is_complete() {
+                let waker = task::waker(&task);
+                let mut cx = Context::from_waker(&waker);
 
-            if let Poll::Ready(()) = task.future().as_mut().poll(&mut cx) {
-                // prevents the task from being rescheduled, in case of
-                // bad future implementations.
-                task.complete();
+                if let Poll::Ready(()) = task.future().as_mut().poll(&mut cx) {
+                    // prevents the task from being rescheduled, in case of
+                    // bad future implementations.
+                    task.complete();
+                }
+            }
+        }
+
+        let backoff = Backoff::new();
+        loop {
+            if !shared.injector.is_empty() {
+                break;
+            } else if backoff.is_completed() {
+                return;
+            } else {
+                backoff.snooze();
             }
         }
     }
