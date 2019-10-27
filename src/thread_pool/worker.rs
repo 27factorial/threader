@@ -78,6 +78,12 @@ pub(super) fn create_worker(
     Ok((join_handle, handle))
 }
 
+fn is_shutdown(state: &AtomicUsize) -> bool {
+    let state = state.load(Ordering::Acquire);
+
+    state == SHUTDOWN_IDLE || state == SHUTDOWN_NOW
+}
+
 fn run_tasks(task_queue: &WorkerQueue<Task>, shared: &Shared, state: &AtomicUsize) {
     loop {
         while let Some(task) = get_task(task_queue, shared) {
@@ -99,7 +105,7 @@ fn run_tasks(task_queue: &WorkerQueue<Task>, shared: &Shared, state: &AtomicUsiz
         loop {
             if !shared.injector.is_empty() {
                 break;
-            } else if backoff.is_completed() {
+            } else if is_shutdown(state) || backoff.is_completed() {
                 return;
             } else {
                 backoff.snooze();
