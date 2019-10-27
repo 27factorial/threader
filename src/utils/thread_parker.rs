@@ -1,3 +1,4 @@
+use crossbeam::utils::Backoff;
 use parking_lot::{Condvar, Mutex};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -53,6 +54,15 @@ impl ThreadUnparker {
             .inner
             .notified
             .compare_and_swap(false, true, Ordering::AcqRel);
+
+        // This backoff loop is to ensure that we're
+        // not trying to notify or wake the thread up
+        // when it has the lock, which could be a race
+        // condition.
+        let backoff = Backoff::new();
+        while let None = self.inner.lock.try_lock() {
+            backoff.snooze();
+        }
         let unparked = self.inner.cvar.notify_one();
 
         notified || unparked
