@@ -1,7 +1,6 @@
 mod waker;
 
 use super::Shared;
-use crate::utils::wrapper::Wrapper;
 use crossbeam::{deque::Injector, utils::Backoff};
 use futures::{
     self,
