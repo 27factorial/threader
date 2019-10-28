@@ -234,10 +234,11 @@ impl AsyncWrite for TcpStream {
 mod tests {
     use super::*;
     use crate::executor::Executor;
+    use crate::thread_pool::ThreadPool;
     use crossbeam::channel;
     use once_cell::sync::Lazy;
 
-    static EX: Lazy<Executor> = Lazy::new(|| Executor::new(None));
+    static EX: Lazy<ThreadPool> = Lazy::new(|| ThreadPool::new().unwrap());
 
     #[test]
     fn connect_test() {
