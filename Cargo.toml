@@ -5,7 +5,7 @@ authors = ["Factorial"]
 edition = "2018"
 
 categories = ["asynchronous", "concurrency", "network-programming"]
-decription = "A performant multithreaded future executor and event loop."
+description = "A performant multithreaded future executor and event loop."
 license = "MIT"
 readme = "README.MD"
 repository = "https://www.github.com/27factorial/threader.git"
