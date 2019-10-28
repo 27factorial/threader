@@ -59,11 +59,8 @@ pub(super) fn create_worker(
             parker.park();
         }
 
-        match thread_handle.state.load(Ordering::Acquire) {
+        match thread_handle.state.swap(RUNNING, Ordering::AcqRel) {
             NEW_TASK => {
-                thread_handle
-                    .state
-                    .compare_and_swap(NEW_TASK, RUNNING, Ordering::AcqRel);
                 run_tasks(&task_queue, &shared, &thread_handle.state);
                 // The sleep queue is exactly large enough to store each thread handle once,
                 // so if this fails, it means we were already on the sleep queue.
@@ -80,7 +77,6 @@ pub(super) fn create_worker(
 
 fn is_shutdown(state: &AtomicUsize) -> bool {
     let state = state.load(Ordering::Acquire);
-
     state == SHUTDOWN_IDLE || state == SHUTDOWN_NOW
 }
 
