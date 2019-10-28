@@ -1,4 +1,5 @@
 use super::{ExecutorFuture, Inner, Task};
+use crate::thread_pool::worker;
 use futures::task::{RawWaker, RawWakerVTable, Waker};
 use std::{
     mem,
@@ -52,6 +53,13 @@ unsafe fn wake(ptr: *const ()) {
 
     if let Some(shared) = task.inner.shared.upgrade() {
         shared.injector.push(task);
+
+        if !shared.sleep_queue.is_empty() {
+            if let Ok(handle) = shared.sleep_queue.pop() {
+                handle.state.store(worker::NEW_TASK, Ordering::Release);
+                handle.unparker.unpark();
+            }
+        }
     }
 }
 
