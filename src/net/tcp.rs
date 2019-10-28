@@ -73,7 +73,7 @@ impl TcpStream {
         let stream = MioTcpStream::connect(&addr)?;
         let io = observer_stream(stream)?;
 
-        dbg!(io.await_writable().await);
+        io.await_writable().await;
 
         match io.get_ref().take_error()? {
             Some(err) => Err(err),
@@ -245,7 +245,7 @@ mod tests {
         let (tx, rx) = channel::unbounded();
 
         EX.spawn(async move {
-            let addr = "173.245.52.164:80".parse().unwrap();
+            let addr = "10.0.0.1:80".parse().unwrap();
             let stream = TcpStream::connect(&addr).await;
             let _ = dbg!(stream);
             tx.send(0).unwrap();
