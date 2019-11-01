@@ -8,10 +8,10 @@ use futures::{
     task::{ArcWake, Waker},
 };
 use std::{
-    cell::UnsafeCell,
+    cell::{Cell, UnsafeCell},
     fmt,
     marker::PhantomData,
-    mem,
+    mem::{self, MaybeUninit},
     ops::{Deref, DerefMut, Drop},
     pin::Pin,
     ptr::{self, NonNull},
@@ -78,7 +78,7 @@ impl Task {
 /// be constructed with an `ExecutorFuture`, but needs to be generic
 /// to construct internally.
 struct Inner<F: ?Sized> {
-    self_ptr: *const Inner<ExecutorFuture>,
+    self_ptr: Cell<Option<*const Inner<ExecutorFuture>>>,
     shared: Weak<Shared>,
     complete: AtomicBool,
     flag: AtomicBool,
@@ -92,25 +92,22 @@ where
     /// Creates a new `Inner` instance with the provided future.
     /// the `flag` field is `false` until `Inner::future()` is called.
     fn new(future: F, shared: Weak<Shared>) -> Arc<Inner<ExecutorFuture>> {
-        // a null fat pointer. Only used as an intermediate step in constructing
-        // this Inner instance.
-        let null_fat =
-            unsafe { *(&[0usize; 2] as *const [usize; 2] as *const *const Inner<ExecutorFuture>) };
-
         let arc = Arc::new(Self {
-            self_ptr: null_fat,
+            self_ptr: Cell::new(None),
             shared,
             complete: AtomicBool::new(false),
             flag: AtomicBool::new(false),
             future: UnsafeCell::new(future),
         }) as Arc<Inner<ExecutorFuture>>;
 
-        let arc_ptr = Arc::into_raw(arc) as *mut Inner<ExecutorFuture>;
+        let arc_ptr = Arc::into_raw(arc);
 
         unsafe {
-            let const_arc_ptr = arc_ptr as *const Inner<ExecutorFuture>;
-            (*arc_ptr).self_ptr = const_arc_ptr;
-            Arc::from_raw(const_arc_ptr)
+            // After this point, unwrap will never panic
+            // since we don't modify the self_ptr again
+            // until Inner is dropped.
+            (*arc_ptr).self_ptr.set(Some(arc_ptr));
+            Arc::from_raw(arc_ptr)
         }
     }
 }

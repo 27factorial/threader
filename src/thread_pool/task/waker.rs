@@ -25,7 +25,8 @@ pub fn waker(task: &Task) -> Waker {
     // itself, so that the second pointer has a location in memory which
     // can not be overwritten until the Arc that the Inner instance comes
     // from is dropped. It's a hack, but it works as far as I've tested.
-    let waker_ptr = unsafe { (&(*ptr).self_ptr) as *const *const Inner<ExecutorFuture> };
+    let waker_ptr =
+        unsafe { &(*ptr).self_ptr.get().unwrap() as *const *const Inner<ExecutorFuture> };
 
     let raw = RawWaker::new(waker_ptr as *const (), VTABLE);
     unsafe { Waker::from_raw(raw) }
