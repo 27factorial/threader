@@ -7,8 +7,9 @@ use futures::{
     future::Future,
     task::{ArcWake, Waker},
 };
+use once_cell::sync::OnceCell;
 use std::{
-    cell::{Cell, UnsafeCell},
+    cell::UnsafeCell,
     fmt,
     marker::PhantomData,
     mem::{self, MaybeUninit},
@@ -22,6 +23,7 @@ use std::{
 };
 
 pub(crate) type ExecutorFuture = dyn Future<Output = ()> + Send + 'static;
+type Inner = InnerPriv<ExecutorFuture>;
 
 pub fn waker(task: &Task) -> Waker {
     waker::waker(task)
@@ -30,7 +32,7 @@ pub fn waker(task: &Task) -> Waker {
 /// A task that can be run on an executor.
 #[derive(Debug)]
 pub struct Task {
-    inner: Arc<Inner<ExecutorFuture>>,
+    inner: Arc<Inner>,
 }
 
 impl Task {
@@ -39,7 +41,7 @@ impl Task {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let inner = Inner::new(future, shared);
+        let inner = InnerPriv::new(future, shared);
 
         Self { inner }
     }
@@ -67,7 +69,7 @@ impl Task {
         }
     }
 
-    fn from_inner(inner: Arc<Inner<ExecutorFuture>>) -> Self {
+    fn from_inner(inner: Arc<Inner>) -> Self {
         Self { inner }
     }
 }
@@ -76,29 +78,30 @@ impl Task {
 /// It is essentially a wrapper around `UnsafeCell<ExecutorFuture>`
 /// that ensures unique access to the underlying future. This can only
 /// be constructed with an `ExecutorFuture`, but needs to be generic
-/// to construct internally.
-struct Inner<F: ?Sized> {
-    self_ptr: Cell<Option<*const Inner<ExecutorFuture>>>,
+/// to construct internally. the `Inner` type alias is used to prevent
+/// repetition.
+struct InnerPriv<F: ?Sized> {
+    self_ptr: OnceCell<*const Inner>,
     shared: Weak<Shared>,
     complete: AtomicBool,
     flag: AtomicBool,
     future: UnsafeCell<F>,
 }
 
-impl<F> Inner<F>
+impl<F> InnerPriv<F>
 where
     F: Future<Output = ()> + Send + 'static,
 {
     /// Creates a new `Inner` instance with the provided future.
     /// the `flag` field is `false` until `Inner::future()` is called.
-    fn new(future: F, shared: Weak<Shared>) -> Arc<Inner<ExecutorFuture>> {
+    fn new(future: F, shared: Weak<Shared>) -> Arc<Inner> {
         let arc = Arc::new(Self {
-            self_ptr: Cell::new(None),
+            self_ptr: OnceCell::new(),
             shared,
             complete: AtomicBool::new(false),
             flag: AtomicBool::new(false),
             future: UnsafeCell::new(future),
-        }) as Arc<Inner<ExecutorFuture>>;
+        }) as Arc<Inner>;
 
         let arc_ptr = Arc::into_raw(arc);
 
@@ -106,13 +109,13 @@ where
             // After this point, unwrap will never panic
             // since we don't modify the self_ptr again
             // until Inner is dropped.
-            (*arc_ptr).self_ptr.set(Some(arc_ptr));
+            (*arc_ptr).self_ptr.set(arc_ptr).unwrap();
             Arc::from_raw(arc_ptr)
         }
     }
 }
 
-impl Inner<ExecutorFuture> {
+impl InnerPriv<ExecutorFuture> {
     /// Returns a unique guard to the contained future, spinning in
     /// an exponential backoff loop if the future is currently in use.
     fn future(&self) -> Pin<FutureRef<'_>> {
@@ -134,9 +137,13 @@ impl Inner<ExecutorFuture> {
             })
         }
     }
+
+    fn self_ptr(&self) -> *const Inner {
+        *self.self_ptr.get().unwrap()
+    }
 }
 
-impl<F: ?Sized> fmt::Debug for Inner<F> {
+impl<F: ?Sized> fmt::Debug for InnerPriv<F> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Inner")
             .field("flag", &self.flag)
@@ -148,12 +155,12 @@ impl<F: ?Sized> fmt::Debug for Inner<F> {
 // SAFETY: This impl is safe because of the way that Inner works.
 // Since it does not allow multiple references to the underlying
 // future, there's no possibility of a data race.
-unsafe impl<F: ?Sized> Send for Inner<F> {}
-unsafe impl<F: ?Sized> Sync for Inner<F> {}
+unsafe impl<F: ?Sized> Send for InnerPriv<F> {}
+unsafe impl<F: ?Sized> Sync for InnerPriv<F> {}
 
 /// A unique guard to this future. Implements `Deref` and `DerefMut`
-/// with a `Target` of `ExecutorFuture`. Its drop implementation also releases
-/// unique access.
+/// with a `Target` of `ExecutorFuture`. Its drop implementation also
+/// releases unique access.
 #[derive(Debug)]
 pub(super) struct FutureRef<'a> {
     flag: &'a AtomicBool,
