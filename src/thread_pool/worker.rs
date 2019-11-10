@@ -5,7 +5,7 @@ use super::{
     Shared,
 };
 use crate::utils::{
-    debug_unreachable::debug_unreachable,
+    debug_utils::debug_unreachable,
     thread_parker::{self, ThreadParker, ThreadUnparker},
 };
 use crossbeam::{
@@ -68,7 +68,7 @@ pub(super) fn create_worker(
             }
             SHUTDOWN_IDLE | SHUTDOWN_NOW => return,
             IDLE => (),
-            _ => debug_unreachable(),
+            _ => unsafe { debug_unreachable() },
         }
     })?;
 
