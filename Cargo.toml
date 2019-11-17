@@ -1,6 +1,6 @@
 [package]
 name = "threader"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Factorial"]
 edition = "2018"
 
@@ -14,8 +14,7 @@ repository = "https://www.github.com/27factorial/threader.git"
 
 [dependencies]
 crossbeam = "0.7.2"
-futures-preview = "0.3.0-alpha.19"
-iovec = "0.1.2"
+futures = "0.3.0"
 lock_api = "0.3.1"
 mio = "0.6.19"
 num_cpus = "1.10.1"

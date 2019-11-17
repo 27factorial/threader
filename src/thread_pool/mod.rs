@@ -201,10 +201,11 @@ mod tests {
     use super::*;
     use crossbeam::channel;
     use futures::task::{Context, Waker};
-    use futures::{future, Poll};
+    use futures::future;
     use parking_lot::Mutex;
     use std::pin::Pin;
     use std::sync::atomic::AtomicBool;
+    use std::task::Poll;
     use std::time::{Duration, Instant};
     use std::thread;
 

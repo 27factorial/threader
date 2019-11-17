@@ -4,7 +4,7 @@ use mio::{Evented, PollOpt, Ready};
 use std::{
     io::{self, Read, Write},
     sync::{atomic::Ordering, Arc},
-    task::Context,
+    task::{Context, Poll},
 };
 
 /// A type that "observes" changes in a resource's state
@@ -75,28 +75,28 @@ impl<R: Evented> Observer<R> {
     }
 
     /// Polls for read readiness.
-    pub fn poll_readable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
+    pub fn poll_readable(&self, cx: &mut Context<'_>) -> Poll<Ready> {
         let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
         if readiness.is_readable() {
             self.io_waker.clear_read();
-            futures::Poll::Ready(readiness)
+            Poll::Ready(readiness)
         } else {
             self.io_waker.register_read(cx.waker());
-            futures::Poll::Pending
+            Poll::Pending
         }
     }
 
     /// Polls for write readiness.
-    pub fn poll_writable(&self, cx: &mut Context<'_>) -> futures::Poll<Ready> {
+    pub fn poll_writable(&self, cx: &mut Context<'_>) -> Poll<Ready> {
         let readiness = Ready::from_usize(self.io_waker.readiness.load(Ordering::Acquire));
 
         if readiness.is_writable() {
             self.io_waker.clear_write();
-            futures::Poll::Ready(readiness)
+            Poll::Ready(readiness)
         } else {
             self.io_waker.register_write(cx.waker());
-            futures::Poll::Pending
+            Poll::Pending
         }
     }
 
