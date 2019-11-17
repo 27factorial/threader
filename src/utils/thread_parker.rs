@@ -2,7 +2,7 @@ use crate::utils::debug_utils::debug_unreachable;
 use crossbeam::utils::Backoff;
 use parking_lot::{Condvar, Mutex};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, Ordering},
     Arc,
 };
 
@@ -105,12 +105,8 @@ impl ThreadUnparker {
     }
 }
 
-const UNPARKED: usize = 0;
-const PARKED: usize = 1;
-const NOTIFY: usize = 2;
-
 struct Inner {
-    notified: AtomicUsize,
+    notified: AtomicBool,
     lock: Mutex<()>,
     cvar: Condvar,
 }
@@ -118,40 +114,23 @@ struct Inner {
 impl Inner {
     fn new() -> Self {
         Self {
-            notified: AtomicUsize::new(UNPARKED),
+            notified: AtomicBool::new(false),
             lock: Mutex::new(()),
             cvar: Condvar::new(),
         }
     }
 
     fn park(&self) {
-        let old = self.notified.load(Ordering::Acquire);
-
-        match old {
-            UNPARKED => {
-                // We need to set ourselves to parked iff
-                // we're still in the unparked state.
-                // Between the load and now, the state
-                // may have been changed to notify.
-                if self
-                    .notified
-                    .compare_and_swap(UNPARKED, PARKED, Ordering::AcqRel)
-                    == UNPARKED
-                {
-                    self.cvar.wait(&mut self.lock.lock());
-                }
-            }
-            NOTIFY => (),
-            _ => unsafe { debug_unreachable() },
+        if !self.notified.load(Ordering::Acquire) {
+            self.cvar.wait(&mut self.lock.lock());
         }
 
-        // At this point, we know the state is NOTIFY, and
-        // we're woken up, so we can set this to UNPARKED.
-        self.notified.store(UNPARKED, Ordering::Release);
+        self.notified
+            .compare_and_swap(false, true, Ordering::Release);
     }
 
     fn unpark(&self) {
-        self.notified.swap(NOTIFY, Ordering::AcqRel);
+        self.notified.swap(true, Ordering::AcqRel);
 
         // There's a short period when the parker is waiting
         // to lock the mutex and before it is unlocked when
