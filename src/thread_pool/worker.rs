@@ -21,6 +21,7 @@ use std::{
         Arc,
     },
     thread::{self, JoinHandle},
+    time::Instant,
 };
 
 // The worker is idle and ready to be woken up.
@@ -85,16 +86,13 @@ fn run_tasks(task_queue: &WorkerQueue<Task>, shared: &Shared, state: &AtomicUsiz
         while let Some(task) = get_task(task_queue, shared) {
             if state.load(Ordering::Acquire) == SHUTDOWN_NOW {
                 return;
-            } else if !task.is_complete() {
-                let waker = task::waker(&task);
-                let mut cx = Context::from_waker(&waker);
-
-                if let Poll::Ready(()) = task.future().as_mut().poll(&mut cx) {
-                    // prevents the task from being rescheduled, in case of
-                    // bad future implementations.
-                    task.complete();
-                }
             }
+
+            let guard = task.guard();
+            let waker = task::waker(&task);
+            let mut cx = Context::from_waker(&waker);
+
+            task.poll(&mut cx, guard);
         }
 
         let backoff = Backoff::new();

@@ -8,12 +8,12 @@ use crossbeam::{
 };
 use futures::Future;
 use std::{
-    io, mem,
+    io,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{Ordering},
         Arc,
     },
-    thread::{self, JoinHandle},
+    thread::JoinHandle,
 };
 use task::Task;
 
@@ -206,6 +206,7 @@ mod tests {
     use std::pin::Pin;
     use std::sync::atomic::AtomicBool;
     use std::time::{Duration, Instant};
+    use std::thread;
 
     static TIMES: usize = 100;
 
@@ -264,7 +265,7 @@ mod tests {
         }
 
         let (tx, rx) = channel::unbounded();
-        let executor = ThreadPool::with_threads(1).unwrap();
+        let executor = ThreadPool::with_threads(12).unwrap();
 
         executor.spawn(async move {
             CustomFuture::new().await;
@@ -332,9 +333,9 @@ mod tests {
     #[test]
     #[ignore]
     fn time_threader() {
-        let mut executor = ThreadPool::new().unwrap();
+        let mut executor = ThreadPool::with_threads(1).unwrap();
         let mut results = Vec::with_capacity(TIMES);
-        eprintln!("threader time test starting...");
+        eprintln!("\nthreader time test starting...");
         let total_start = Instant::now();
         for _ in 0..TIMES {
             let start = Instant::now();
@@ -346,6 +347,7 @@ mod tests {
             }
 
             let end = start.elapsed();
+            // eprintln!("threader: {:?}", end);
             results.push(end.as_millis());
         }
         let shutdown_start = Instant::now();
@@ -356,6 +358,6 @@ mod tests {
             let sum: u128 = results.into_iter().sum();
             (sum as f64) / (TIMES as f64)
         };
-        eprintln!("threader average: {:?} ms", average);
+        eprintln!("threader average: {:?}ms", average);
     }
 }
