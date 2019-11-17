@@ -1,3 +1,4 @@
-pub(crate) mod atomic_stack;
-pub(crate) mod debug_unreachable;
-pub(crate) mod thread_parker;
+pub mod debug_utils;
+pub mod thread_parker;
+
+pub use self::debug_utils::debug_unreachable;
