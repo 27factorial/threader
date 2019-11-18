@@ -291,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn bad_future() {
         // A future that spawns a thread, returns Poll::Ready(()), and
         // keeps trying to reschedule itself on the thread_pool.
