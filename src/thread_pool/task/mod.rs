@@ -3,7 +3,7 @@ mod waker;
 
 use super::Shared;
 use futures::{self, future::Future, task::Waker};
-use raw::{Header, RawTask};
+use raw::{Header, InvalidGuard, PollGuard, RawTask};
 use std::{sync::Weak, task::Context};
 
 pub fn waker(task: &Task) -> Waker {
@@ -13,8 +13,6 @@ pub fn waker(task: &Task) -> Waker {
 pub(crate) trait ExecutorFuture: Future<Output = ()> + Send + 'static {}
 
 impl<F: Future<Output = ()> + Send + 'static> ExecutorFuture for F {}
-
-pub(crate) struct PollGuard(());
 
 /// A task that can be run on an executor.
 #[derive(Debug)]
@@ -37,8 +35,12 @@ impl Task {
         self.raw.lock()
     }
 
-    pub(super) fn poll(&self, cx: &mut Context, guard: PollGuard) {
-        self.raw.poll(cx, guard);
+    pub(super) fn poll<'a>(
+        &self,
+        cx: &'a mut Context,
+        guard: &'a PollGuard,
+    ) -> Result<(), InvalidGuard> {
+        self.raw.poll(cx, &guard)
     }
 
     unsafe fn from_raw(header: *const Header) -> Self {

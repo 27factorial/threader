@@ -92,7 +92,7 @@ fn run_tasks(task_queue: &WorkerQueue<Task>, shared: &Shared, state: &AtomicUsiz
             let waker = task::waker(&task);
             let mut cx = Context::from_waker(&waker);
 
-            task.poll(&mut cx, guard);
+            task.poll(&mut cx, &guard).expect("Invalid guard supplied.");
         }
 
         let backoff = Backoff::new();

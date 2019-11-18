@@ -1,10 +1,11 @@
-use super::{ExecutorFuture, PollGuard};
+use super::ExecutorFuture;
 use crate::thread_pool::Shared;
 use crossbeam::utils::Backoff;
 use std::{
     cell::UnsafeCell,
     mem,
     pin::Pin,
+    ptr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Weak,
@@ -30,17 +31,32 @@ impl RawTask {
         unsafe {
             lock(self.ptr);
         }
-        PollGuard(())
+
+        PollGuard(self.ptr)
     }
 
-    pub(super) fn poll(&self, cx: &mut Context, _: PollGuard) {
+    pub(super) fn poll<'a>(
+        &self,
+        cx: &'a mut Context,
+        g: &'a PollGuard,
+    ) -> Result<(), InvalidGuard> {
+        // We must do this to prevent passing in arbitrary guards
+        // and polling a task when it is not actually locked.
+        if !ptr::eq(self.ptr, g.0) {
+            return Err(InvalidGuard);
+        }
+
         // SAFETY: Since we pass in a guard here, and the only
         // way to obtain a PollGuard is by locking the task, we
         // have upheld the invariant of the vtable's poll fn.
+        // Additionally, the check above ensures that the guard
+        // is actually one to this pointer.
         unsafe {
             let vtable_poll = (*(self.ptr)).vtable.poll;
             vtable_poll(self.ptr, cx);
         }
+
+        Ok(())
     }
 
     pub(super) fn ptr(&self) -> *const Header {
@@ -74,6 +90,19 @@ impl Drop for RawTask {
 
 unsafe impl Send for RawTask {}
 unsafe impl Sync for RawTask {}
+
+pub(crate) struct PollGuard(*const Header);
+
+impl Drop for PollGuard {
+    fn drop(&mut self) {
+        unsafe {
+            unlock(self.0);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Ord, Eq)]
+pub(crate) struct InvalidGuard;
 
 #[repr(C)]
 struct Inner<F>
@@ -149,9 +178,7 @@ where
 
         if let Poll::Ready(()) = future.poll(cx) {
             set_complete(ptr);
-        } else {
-            unlock(ptr);
-        };
+        }
     }
 }
 
