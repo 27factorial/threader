@@ -247,10 +247,10 @@ mod tests {
         EX.spawn(async move {
             let addr = "10.0.0.1:80".parse().unwrap();
             let stream = TcpStream::connect(&addr).await;
-            let _ = dbg!(stream);
-            tx.send(0).unwrap();
+            let res = dbg!(stream).map(|_| ()).map_err(|_| ());
+            tx.send(res).unwrap();
         });
 
-        assert_eq!(rx.recv(), Ok(0));
+        assert_eq!(rx.recv(), Ok(Ok(())));
     }
 }
