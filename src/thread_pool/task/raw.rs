@@ -37,8 +37,6 @@ impl RawTask {
 
             let vtable_poll = (*(self.ptr)).vtable.poll;
             vtable_poll(self.ptr, cx);
-
-            unlock(self.ptr);
         }
     }
 
@@ -151,8 +149,9 @@ where
         let inner = &*(ptr as *const Inner<F>);
         let future = Pin::new_unchecked(&mut *inner.future.get());
 
-        if let Poll::Ready(()) = future.poll(cx) {
-            set_complete(ptr);
+        match future.poll(cx) {
+            Poll::Ready(()) => set_complete(ptr),
+            _ => unlock(ptr),
         }
     }
 }
