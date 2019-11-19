@@ -230,6 +230,98 @@ impl AsyncWrite for TcpStream {
     }
 }
 
+// =============== TcpListener =============== //
+
+#[derive(Debug)]
+pub struct TcpListener {
+    observer: Observer<MioTcpListener>,
+}
+
+impl TcpListener {
+    pub fn bind(addr: &SocketAddr) -> io::Result<Self> {
+        let listener = MioTcpListener::bind(&addr)?;
+        let observer = observer_listener(listener)?;
+
+        match observer.get_ref().take_error()? {
+            Some(err) => Err(err),
+            None => Ok(Self { observer }),
+        }
+    }
+
+    pub fn from_std(listener: StdTcpListener) -> io::Result<Self> {
+        let listener = MioTcpListener::from_std(listener)?;
+        let observer = observer_listener(listener)?;
+
+        match observer.get_ref().take_error()? {
+            Some(err) => Err(err),
+            None => Ok(Self { observer }),
+        }
+    }
+
+    pub async fn accept_std(&self) -> io::Result<StdTcpStream> {
+        use io::ErrorKind::WouldBlock;
+
+        let stream = loop {
+            match self.observer.get_ref().accept_std() {
+                Ok((stream, _)) => break stream,
+                Err(e) if !is_retry(&e) => return Err(e),
+                Err(e) if e.kind() == WouldBlock => {
+                    self.observer.reregister(rw(), PollOpt::edge())?;
+                    self.observer.await_readable().await;
+                }
+                _ => (), // interrupted.
+            }
+        };
+
+        match stream.take_error()? {
+            Some(err) => Err(err),
+            None => Ok(stream),
+        }
+    }
+
+    pub async fn accept(&self) -> io::Result<TcpStream> {
+        use io::ErrorKind::WouldBlock;
+
+        let stream = loop {
+            match self.observer.get_ref().accept() {
+                Ok((stream, _)) => break stream,
+                Err(e) if !is_retry(&e) => return Err(e),
+                Err(e) if e.kind() == WouldBlock => {
+                    self.observer.reregister(rw(), PollOpt::edge())?;
+                    self.observer.await_readable().await;
+                }
+                _ => (), // interrupted.
+            }
+        };
+        let observer = observer_stream(stream)?;
+
+        match observer.get_ref().take_error()? {
+            Some(err) => Err(err),
+            None => Ok(TcpStream { observer }),
+        }
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.observer.get_ref().local_addr()
+    }
+
+    pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
+        self.observer.get_ref().set_ttl(ttl)
+    }
+
+    pub fn ttl(&self) -> io::Result<u32> {
+        self.observer.get_ref().ttl()
+    }
+
+    pub fn set_only_v6(&self, only_v6: bool) -> io::Result<()> {
+        self.observer.get_ref().set_only_v6(only_v6)
+    }
+
+    pub fn only_v6(&self) -> io::Result<bool> {
+        self.observer.get_ref().only_v6()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,19 +330,52 @@ mod tests {
     use crossbeam::channel;
     use once_cell::sync::Lazy;
 
-    static EX: Lazy<ThreadPool> = Lazy::new(|| ThreadPool::new().unwrap());
+    static EX: Lazy<ThreadPool> = Lazy::new(|| ThreadPool::with_threads(1).unwrap());
 
     #[test]
+    #[ignore]
+    // Ignored because the IP may not be valid on
+    // your network.
     fn connect_test() {
         let (tx, rx) = channel::unbounded();
 
         EX.spawn(async move {
             let addr = "10.0.0.1:80".parse().unwrap();
             let stream = TcpStream::connect(&addr).await;
-            let res = dbg!(stream).map(|_| ()).map_err(|_| ());
-            tx.send(res).unwrap();
+            let _ = dbg!(stream);
+            tx.send(0).unwrap();
+        });
+
+        assert_eq!(rx.recv(), Ok(0));
+    }
+
+    #[test]
+    fn listener_stream_connect() {
+        let (tx, rx) = channel::unbounded();
+        let (tx2, rx2) = channel::unbounded();
+
+        EX.spawn(async move {
+            let addr = "127.0.0.1:25565".parse().unwrap();
+            let listener = dbg!(TcpListener::bind(&addr));
+            match listener {
+                Err(_) => tx.send(Err(())).unwrap(),
+                Ok(listener) => {
+                    let res = listener.accept().await.map(|_| ()).map_err(|_| ());
+                    tx.send(res).unwrap()
+                }
+            }
+        });
+
+        EX.spawn(async move {
+            let addr = "127.0.0.1:25565".parse().unwrap();
+            let stream = dbg!(TcpStream::connect(&addr).await);
+            match stream {
+                Err(_) => tx2.send(Err(())).unwrap(),
+                Ok(_) => tx2.send(Ok(())).unwrap(),
+            }
         });
 
         assert_eq!(rx.recv(), Ok(Ok(())));
+        assert_eq!(rx2.recv(), Ok(Ok(())));
     }
 }
