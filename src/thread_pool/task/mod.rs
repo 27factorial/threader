@@ -3,7 +3,7 @@ mod waker;
 
 use super::Shared;
 use futures::{self, future::Future, task::Waker};
-use raw::{Header, InvalidGuard, PollGuard, RawTask};
+use raw::{Header, InvalidGuard, RawTask};
 use std::{sync::Weak, task::Context};
 
 pub fn waker(task: &Task) -> Waker {
@@ -31,16 +31,8 @@ impl Task {
         Self { raw }
     }
 
-    pub(super) fn guard(&self) -> PollGuard {
-        self.raw.lock()
-    }
-
-    pub(super) fn poll<'a>(
-        &self,
-        cx: &'a mut Context,
-        guard: &'a PollGuard,
-    ) -> Result<(), InvalidGuard> {
-        self.raw.poll(cx, &guard)
+    pub(super) fn poll(&self, cx: &mut Context) {
+        self.raw.poll(cx)
     }
 
     unsafe fn from_raw(header: *const Header) -> Self {
