@@ -23,7 +23,7 @@ pub struct Background {
 impl Background {
     /// Creates a new background thread which polls the given
     /// reactor. All errors returned during the creation of
-    /// the `ReactorThread` will be propogated.
+    /// the `ReactorThread` will be propagated.
     pub fn new(mut reactor: Reactor) -> io::Result<Self> {
         let (reg, wakeup) = Registration::new2();
         let reactor_handle = reactor.handle();
@@ -99,7 +99,6 @@ impl Background {
 
 impl Drop for Background {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
         let _ = self.shutdown_now();
     }
 }
