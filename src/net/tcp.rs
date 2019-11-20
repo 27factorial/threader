@@ -258,12 +258,12 @@ impl TcpListener {
         }
     }
 
-    pub async fn accept_std(&self) -> io::Result<StdTcpStream> {
+    pub async fn accept_std(&self) -> io::Result<(StdTcpStream, SocketAddr)> {
         use io::ErrorKind::WouldBlock;
 
-        let stream = loop {
+        let (stream, addr) = loop {
             match self.observer.get_ref().accept_std() {
-                Ok((stream, _)) => break stream,
+                Ok((stream, addr)) => break (stream, addr),
                 Err(e) if !is_retry(&e) => return Err(e),
                 Err(e) if e.kind() == WouldBlock => {
                     self.observer.reregister(rw(), PollOpt::edge())?;
@@ -275,16 +275,16 @@ impl TcpListener {
 
         match stream.take_error()? {
             Some(err) => Err(err),
-            None => Ok(stream),
+            None => Ok((stream, addr)),
         }
     }
 
-    pub async fn accept(&self) -> io::Result<TcpStream> {
+    pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
         use io::ErrorKind::WouldBlock;
 
-        let stream = loop {
+        let (stream, addr) = loop {
             match self.observer.get_ref().accept() {
-                Ok((stream, _)) => break stream,
+                Ok((stream, addr)) => break (stream, addr),
                 Err(e) if !is_retry(&e) => return Err(e),
                 Err(e) if e.kind() == WouldBlock => {
                     self.observer.reregister(rw(), PollOpt::edge())?;
@@ -293,11 +293,12 @@ impl TcpListener {
                 _ => (), // interrupted.
             }
         };
+
         let observer = observer_stream(stream)?;
 
         match observer.get_ref().take_error()? {
             Some(err) => Err(err),
-            None => Ok(TcpStream { observer }),
+            None => Ok((TcpStream { observer }, addr)),
         }
     }
 
@@ -355,7 +356,7 @@ mod tests {
         let (tx2, rx2) = channel::unbounded();
 
         EX.spawn(async move {
-            let addr = "127.0.0.1:25565".parse().unwrap();
+            let addr = "127.0.0.1:65535".parse().unwrap();
             let listener = dbg!(TcpListener::bind(&addr));
             match listener {
                 Err(_) => tx.send(Err(())).unwrap(),
@@ -367,7 +368,7 @@ mod tests {
         });
 
         EX.spawn(async move {
-            let addr = "127.0.0.1:25565".parse().unwrap();
+            let addr = "127.0.0.1:65535".parse().unwrap();
             let stream = dbg!(TcpStream::connect(&addr).await);
             match stream {
                 Err(_) => tx2.send(Err(())).unwrap(),
@@ -377,5 +378,32 @@ mod tests {
 
         assert_eq!(rx.recv(), Ok(Ok(())));
         assert_eq!(rx2.recv(), Ok(Ok(())));
+    }
+
+    #[test]
+    fn connect_invalid_port() {
+        let (tx, rx) = channel::unbounded();
+        let (tx2, rx2) = channel::unbounded();
+
+        EX.spawn(async move {
+            let addr = "127.0.0.1:61111".parse().unwrap();
+            let listener = dbg!(TcpListener::bind(&addr));
+            match listener {
+                Err(_) => tx.send(Err(())).unwrap(),
+                _ => tx.send(Ok(())).unwrap(),
+            }
+        });
+
+        EX.spawn(async move {
+            let addr = "127.0.0.1:65535".parse().unwrap();
+            let stream = dbg!(TcpStream::connect(&addr).await);
+            match stream {
+                Err(_) => tx2.send(Err(())).unwrap(),
+                Ok(_) => tx2.send(Ok(())).unwrap(),
+            }
+        });
+
+        assert_eq!(rx.recv(), Ok(Ok(()))); // Should still bind
+        assert_eq!(rx2.recv(), Ok(Err(()))); // Connection refused
     }
 }
