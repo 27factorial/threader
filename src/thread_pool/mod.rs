@@ -9,10 +9,7 @@ use crossbeam::{
 use futures::Future;
 use std::{
     io,
-    sync::{
-        atomic::{Ordering},
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     thread::JoinHandle,
 };
 use task::Task;
@@ -200,14 +197,14 @@ pub(crate) struct Shared {
 mod tests {
     use super::*;
     use crossbeam::channel;
-    use futures::task::{Context, Waker};
     use futures::future;
+    use futures::task::{Context, Waker};
     use parking_lot::Mutex;
     use std::pin::Pin;
     use std::sync::atomic::AtomicBool;
     use std::task::Poll;
-    use std::time::{Duration, Instant};
     use std::thread;
+    use std::time::{Duration, Instant};
 
     static TIMES: usize = 100;
 
@@ -245,10 +242,7 @@ mod tests {
                     }
                 });
 
-                CustomFuture {
-                    waker,
-                    shared,
-                }
+                CustomFuture { waker, shared }
             }
         }
 
@@ -291,6 +285,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn bad_future() {
         // A future that spawns a thread, returns Poll::Ready(()), and
         // keeps trying to reschedule itself on the thread_pool.

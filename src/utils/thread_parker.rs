@@ -23,7 +23,7 @@ pub fn new2() -> (ThreadParker, ThreadUnparker) {
 /// use threader::utils::thread_parker;
 ///
 /// fn main() {
-///     let (parker, unparker) = thead_parker::new2();
+///     let (parker, unparker) = thread_parker::new2();
 /// }
 /// ```
 pub struct ThreadParker {

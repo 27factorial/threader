@@ -1,10 +1,11 @@
-use super::{ExecutorFuture, PollGuard};
+use super::ExecutorFuture;
 use crate::thread_pool::Shared;
 use crossbeam::utils::Backoff;
 use std::{
     cell::UnsafeCell,
     mem,
     pin::Pin,
+    ptr,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Weak,
@@ -26,18 +27,14 @@ impl RawTask {
         Self { ptr: header }
     }
 
-    pub(super) fn lock(&self) -> PollGuard {
+    pub(super) fn poll(&self, cx: &mut Context) {
         unsafe {
+            // While this technically does block, in most cases
+            // it's only for a very short amount of time, so it
+            // should be fine to lock here. This is required to
+            // make the call to poll below defined behavior.
             lock(self.ptr);
-        }
-        PollGuard(())
-    }
 
-    pub(super) fn poll(&self, cx: &mut Context, _: PollGuard) {
-        // SAFETY: Since we pass in a guard here, and the only
-        // way to obtain a PollGuard is by locking the task, we
-        // have upheld the invariant of the vtable's poll fn.
-        unsafe {
             let vtable_poll = (*(self.ptr)).vtable.poll;
             vtable_poll(self.ptr, cx);
         }
@@ -74,6 +71,9 @@ impl Drop for RawTask {
 
 unsafe impl Send for RawTask {}
 unsafe impl Sync for RawTask {}
+
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Ord, Eq)]
+pub(crate) struct InvalidGuard;
 
 #[repr(C)]
 struct Inner<F>
@@ -143,15 +143,16 @@ where
     F: ExecutorFuture,
 {
     debug_assert!(!ptr.is_null());
+    debug_assert!((*ptr).state.load(Ordering::SeqCst) == LOCKED);
+
     if (*ptr).state.load(Ordering::Acquire) != COMPLETE {
         let inner = &*(ptr as *const Inner<F>);
         let future = Pin::new_unchecked(&mut *inner.future.get());
 
-        if let Poll::Ready(()) = future.poll(cx) {
-            set_complete(ptr);
-        } else {
-            unlock(ptr);
-        };
+        match future.poll(cx) {
+            Poll::Ready(()) => set_complete(ptr),
+            _ => unlock(ptr),
+        }
     }
 }
 
