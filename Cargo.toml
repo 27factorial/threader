@@ -1,6 +1,6 @@
 [package]
 name = "threader"
-version = "0.1.0"
+version = "0.0.4"
 authors = ["Factorial"]
 edition = "2018"
 
