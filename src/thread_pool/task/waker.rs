@@ -17,7 +17,7 @@ unsafe fn cast_header(ptr: *const ()) -> *const Header {
 }
 
 unsafe fn inc_refcount(ptr: *const Header) {
-    ((*ptr).vtable.inc_refcount)(ptr);
+    ((&*ptr).vtable.inc_refcount)(ptr);
 }
 
 unsafe fn clone(ptr: *const ()) -> RawWaker {

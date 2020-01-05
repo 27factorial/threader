@@ -35,7 +35,7 @@ impl RawTask {
             // make the call to poll below defined behavior.
             lock(self.ptr);
 
-            let vtable_poll = (*(self.ptr)).vtable.poll;
+            let vtable_poll = (&*(self.ptr)).vtable.poll;
             vtable_poll(self.ptr, cx);
         }
     }
@@ -52,7 +52,7 @@ impl RawTask {
 impl Clone for RawTask {
     fn clone(&self) -> Self {
         unsafe {
-            let vtable = (*(self.ptr)).vtable;
+            let vtable = (&*(self.ptr)).vtable;
             (vtable.inc_refcount)(self.ptr);
         }
 
@@ -63,7 +63,7 @@ impl Clone for RawTask {
 impl Drop for RawTask {
     fn drop(&mut self) {
         unsafe {
-            let vtable = (*(self.ptr)).vtable;
+            let vtable = (&*(self.ptr)).vtable;
             (vtable.drop)(self.ptr);
         }
     }
